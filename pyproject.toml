@@ -11,8 +11,7 @@ dependencies = [
     "typer>=0.16.0"
 ]
 [[project.authors]]
-name = "haris"
-email = "haris.musa@outlook.com"
+name = "iHeldan"
 
 [project.scripts]
 excel-mcp-server = "excel_mcp.__main__:app"
