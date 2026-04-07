@@ -1,7 +1,7 @@
 [project]
-name = "excel-mcp-server"
-version = "0.1.8"
-description = "MCP server for reading, writing, and transforming Excel workbooks"
+name = "iheldan-excel-mcp"
+version = "0.2.0"
+description = "IHeldan's MCP server for reading, writing, and reshaping Excel workbooks"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -14,7 +14,7 @@ dependencies = [
 name = "iHeldan"
 
 [project.scripts]
-excel-mcp-server = "excel_mcp.__main__:app"
+iheldan-excel-mcp = "excel_mcp.__main__:app"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0"]

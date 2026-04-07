@@ -1,4 +1,4 @@
-# Excel MCP Server Tool Reference
+# IHeldan Excel MCP Tool Reference
 
 This file documents the public MCP tool surface exposed by `src/excel_mcp/server.py`.
 

@@ -1,6 +1,9 @@
-# Excel MCP Server
+# IHeldan Excel MCP
 
-Excel MCP Server exposes `.xlsx` workbook operations over the Model Context Protocol. It uses `openpyxl` under the hood, so MCP clients can inspect and modify Excel files without launching Microsoft Excel or LibreOffice.
+IHeldan Excel MCP exposes `.xlsx` workbook operations over the Model Context Protocol. It uses `openpyxl` under the hood, so MCP clients can inspect and modify Excel files without launching Microsoft Excel or LibreOffice.
+
+Package name: `iheldan-excel-mcp`
+CLI command: `iheldan-excel-mcp`
 
 ## What This Project Covers
 
@@ -26,7 +29,7 @@ Excel MCP Server exposes `.xlsx` workbook operations over the Model Context Prot
 Use `stdio` when the MCP client starts the server locally.
 
 ```bash
-uvx excel-mcp-server stdio
+uvx iheldan-excel-mcp stdio
 ```
 
 ```json
@@ -34,7 +37,7 @@ uvx excel-mcp-server stdio
   "mcpServers": {
     "excel": {
       "command": "uvx",
-      "args": ["excel-mcp-server", "stdio"]
+      "args": ["iheldan-excel-mcp", "stdio"]
     }
   }
 }
@@ -45,7 +48,7 @@ uvx excel-mcp-server stdio
 Use `streamable-http` when you want a long-running local or remote server process.
 
 ```bash
-EXCEL_FILES_PATH=/path/to/excel-files uvx excel-mcp-server streamable-http
+EXCEL_FILES_PATH=/path/to/excel-files uvx iheldan-excel-mcp streamable-http
 ```
 
 Default endpoint:
@@ -71,7 +74,7 @@ Example client config:
 SSE is kept for compatibility, but new integrations should prefer `streamable-http`.
 
 ```bash
-EXCEL_FILES_PATH=/path/to/excel-files uvx excel-mcp-server sse
+EXCEL_FILES_PATH=/path/to/excel-files uvx iheldan-excel-mcp sse
 ```
 
 Default endpoint:
@@ -131,8 +134,13 @@ uv run --extra dev pytest -q
 Run the package locally:
 
 ```bash
-uv run excel-mcp-server stdio
+uv run iheldan-excel-mcp stdio
 ```
+
+## Release Flow
+
+- GitHub releases run a build verification workflow only.
+- PyPI publishing is a separate manual workflow, so releases do not create a failing deployment before Trusted Publisher is configured for the package.
 
 ## Repository Layout
 

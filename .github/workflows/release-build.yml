@@ -1,17 +1,13 @@
-name: Publish to PyPI
+name: Verify Release Build
 
 on:
-  workflow_dispatch:
+  release:
+    types: [published]
 
 jobs:
-  build-n-publish:
-    name: Build and publish to PyPI
+  build:
+    name: Build distributions
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/project/iheldan-excel-mcp
-    permissions:
-      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +24,3 @@ jobs:
 
       - name: Build package
         run: hatch build
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
