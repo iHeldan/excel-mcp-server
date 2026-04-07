@@ -9,11 +9,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/iHeldan/excel-mcp-server"
+    "url": "https://github.com/iHeldan/sheetforge-mcp"
   },
-  "homepage": "https://github.com/iHeldan/excel-mcp-server",
-  "documentation": "https://github.com/iHeldan/excel-mcp-server#readme",
-  "support": "https://github.com/iHeldan/excel-mcp-server/issues",
+  "homepage": "https://github.com/iHeldan/sheetforge-mcp",
+  "documentation": "https://github.com/iHeldan/sheetforge-mcp#readme",
+  "support": "https://github.com/iHeldan/sheetforge-mcp/issues",
   "icon": "icon.png",
   "server": {
     "type": "python",
