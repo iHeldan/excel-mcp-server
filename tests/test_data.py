@@ -2,13 +2,14 @@ import json
 
 from excel_mcp.data import (
     append_table_rows,
+    quick_read as quick_read_impl,
     read_as_table,
     read_excel_range,
     read_excel_range_with_metadata,
     update_rows_by_key,
     write_data,
 )
-from excel_mcp.server import list_all_sheets, read_data_from_excel, search_in_sheet
+from excel_mcp.server import list_all_sheets, quick_read, read_data_from_excel, search_in_sheet
 
 
 def _load_tool_payload(raw: str) -> dict:
@@ -128,6 +129,27 @@ def test_list_all_sheets_returns_json_envelope(tmp_workbook):
     payload = _load_tool_payload(list_all_sheets(tmp_workbook))
     assert payload["operation"] == "list_all_sheets"
     assert payload["data"]["sheets"][0]["name"] == "Sheet1"
+
+
+def test_quick_read_uses_first_sheet_when_sheet_name_omitted(multi_sheet_workbook):
+    result = quick_read_impl(multi_sheet_workbook)
+    assert result["sheet_name"] == "Sales"
+    assert result["auto_selected_sheet"] is True
+    assert result["headers"] == ["Product", "Revenue"]
+
+
+def test_quick_read_respects_explicit_sheet_name(multi_sheet_workbook):
+    result = quick_read_impl(multi_sheet_workbook, sheet_name="Inventory")
+    assert result["sheet_name"] == "Inventory"
+    assert result["auto_selected_sheet"] is False
+    assert result["headers"] == ["Item", "Count"]
+
+
+def test_quick_read_tool_returns_json_envelope(multi_sheet_workbook):
+    payload = _load_tool_payload(quick_read(multi_sheet_workbook))
+    assert payload["operation"] == "quick_read"
+    assert payload["data"]["sheet_name"] == "Sales"
+    assert payload["data"]["auto_selected_sheet"] is True
 
 
 def test_write_data_dry_run_does_not_persist(tmp_workbook):

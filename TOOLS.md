@@ -167,6 +167,8 @@ Returns matches under `data.matches`:
   Returns cell range data with row, column, address, value, and validation metadata under the shared envelope.
 - `read_excel_as_table(filepath: str, sheet_name: str, header_row: int = 1, max_rows: Optional[int] = None) -> str`
   Returns `headers`, `rows`, `total_rows`, `truncated`, and `sheet_name`.
+- `quick_read(filepath: str, sheet_name: Optional[str] = None, header_row: int = 1, max_rows: Optional[int] = None) -> str`
+  Returns a compact table from the requested sheet, or auto-selects the first workbook sheet when `sheet_name` is omitted.
 - `search_in_sheet(filepath: str, sheet_name: str, query: Any, exact: bool = True, max_results: int = 50) -> str`
   Returns exact or partial value matches across the worksheet.
 - `append_table_rows(filepath: str, sheet_name: str, rows: List[Dict[str, Any]], header_row: int = 1, dry_run: bool = False) -> str`
@@ -193,6 +195,10 @@ Returns matches under `data.matches`:
   Sets freeze panes at the given cell or clears them when `cell` is omitted or `A1`. Supports preview mode.
 - `set_autofilter(filepath: str, sheet_name: str, range_ref: Optional[str] = None, dry_run: bool = False) -> str`
   Applies an autofilter to the given range or infers the used range automatically. Supports preview mode.
+- `set_column_widths(filepath: str, sheet_name: str, widths: Dict[str, float], dry_run: bool = False) -> str`
+  Sets explicit widths for one or more worksheet columns using a map keyed by column letter. Supports preview mode.
+- `set_row_heights(filepath: str, sheet_name: str, heights: Dict[str, float], dry_run: bool = False) -> str`
+  Sets explicit heights for one or more worksheet rows using a map keyed by row number. Supports preview mode.
 - `merge_cells(filepath: str, sheet_name: str, start_cell: str, end_cell: str, dry_run: bool = False) -> str`
   Merges the selected range and supports preview mode.
 - `unmerge_cells(filepath: str, sheet_name: str, start_cell: str, end_cell: str, dry_run: bool = False) -> str`

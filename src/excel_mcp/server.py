@@ -27,6 +27,7 @@ from excel_mcp.chart import create_chart_in_sheet as create_chart_impl
 from excel_mcp.workbook import get_workbook_info, list_named_ranges as list_named_ranges_impl
 from excel_mcp.data import (
     append_table_rows as append_table_rows_impl,
+    quick_read as quick_read_impl,
     read_as_table,
     search_cells,
     update_rows_by_key as update_rows_by_key_impl,
@@ -47,6 +48,8 @@ from excel_mcp.sheet import (
     get_merged_ranges,
     set_auto_filter,
     set_freeze_panes,
+    set_column_widths as set_column_widths_impl,
+    set_row_heights as set_row_heights_impl,
     insert_row,
     insert_cols,
     delete_rows,
@@ -380,6 +383,30 @@ def read_excel_as_table(
     return _run_tool(
         "read_excel_as_table",
         lambda: read_as_table(get_excel_path(filepath), sheet_name, header_row=header_row, max_rows=max_rows),
+    )
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Quick Read",
+        readOnlyHint=True,
+    ),
+)
+def quick_read(
+    filepath: str,
+    sheet_name: Optional[str] = None,
+    header_row: int = 1,
+    max_rows: Optional[int] = None,
+) -> str:
+    """Read a compact table from an explicit sheet or the first workbook sheet."""
+    return _run_tool(
+        "quick_read",
+        lambda: quick_read_impl(
+            get_excel_path(filepath),
+            sheet_name=sheet_name,
+            header_row=header_row,
+            max_rows=max_rows,
+        ),
     )
 
 
@@ -759,6 +786,54 @@ def set_worksheet_visibility(
             get_excel_path(filepath),
             sheet_name,
             visibility,
+            dry_run=dry_run,
+        ),
+    )
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Set Column Widths",
+        destructiveHint=True,
+    ),
+)
+def set_column_widths(
+    filepath: str,
+    sheet_name: str,
+    widths: Dict[str, float],
+    dry_run: bool = False,
+) -> str:
+    """Set explicit widths for one or more worksheet columns."""
+    return _run_tool(
+        "set_column_widths",
+        lambda: set_column_widths_impl(
+            get_excel_path(filepath),
+            sheet_name,
+            widths,
+            dry_run=dry_run,
+        ),
+    )
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Set Row Heights",
+        destructiveHint=True,
+    ),
+)
+def set_row_heights(
+    filepath: str,
+    sheet_name: str,
+    heights: Dict[str, float],
+    dry_run: bool = False,
+) -> str:
+    """Set explicit heights for one or more worksheet rows."""
+    return _run_tool(
+        "set_row_heights",
+        lambda: set_row_heights_impl(
+            get_excel_path(filepath),
+            sheet_name,
+            heights,
             dry_run=dry_run,
         ),
     )

@@ -131,6 +131,133 @@ def set_sheet_visibility(
         logger.error(f"Failed to set worksheet visibility: {e}")
         raise SheetError(str(e))
 
+
+def _validate_dimension_value(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValidationError(f"{label} must be a number greater than 0")
+    if value <= 0:
+        raise ValidationError(f"{label} must be greater than 0")
+    return float(value)
+
+
+def set_column_widths(
+    filepath: str,
+    sheet_name: str,
+    widths: Dict[str, float],
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Set explicit widths for one or more worksheet columns."""
+    try:
+        if not widths:
+            raise ValidationError("At least one column width must be provided")
+
+        normalized_widths: Dict[str, float] = {}
+        for column_key, width_value in widths.items():
+            column_letter = str(column_key).strip().upper()
+            try:
+                column_index_from_string(column_letter)
+            except ValueError as e:
+                raise ValidationError(f"Invalid column letter: {column_key}") from e
+            normalized_widths[column_letter] = _validate_dimension_value(
+                width_value, f"Width for column {column_letter}"
+            )
+
+        with safe_workbook(filepath, save=not dry_run) as wb:
+            if sheet_name not in wb.sheetnames:
+                raise SheetError(f"Sheet '{sheet_name}' not found")
+
+            worksheet = wb[sheet_name]
+            changes = []
+            for column_letter, width_value in normalized_widths.items():
+                old_value = worksheet.column_dimensions[column_letter].width
+                worksheet.column_dimensions[column_letter].width = width_value
+                changes.append(
+                    {
+                        "type": "set_column_width",
+                        "sheet_name": sheet_name,
+                        "column": column_letter,
+                        "old_value": old_value,
+                        "new_value": width_value,
+                    }
+                )
+
+        return {
+            "message": (
+                f"{'Previewed' if dry_run else 'Set'} widths for "
+                f"{len(normalized_widths)} column(s) in sheet '{sheet_name}'"
+            ),
+            "sheet_name": sheet_name,
+            "widths": normalized_widths,
+            "dry_run": dry_run,
+            "changes": changes,
+        }
+    except (ValidationError, SheetError) as e:
+        logger.error(str(e))
+        raise
+    except Exception as e:
+        logger.error(f"Failed to set column widths: {e}")
+        raise SheetError(str(e))
+
+
+def set_row_heights(
+    filepath: str,
+    sheet_name: str,
+    heights: Dict[str, float],
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Set explicit heights for one or more worksheet rows."""
+    try:
+        if not heights:
+            raise ValidationError("At least one row height must be provided")
+
+        normalized_heights: Dict[int, float] = {}
+        for row_key, height_value in heights.items():
+            try:
+                row_number = int(str(row_key).strip())
+            except ValueError as e:
+                raise ValidationError(f"Invalid row number: {row_key}") from e
+            if row_number < 1:
+                raise ValidationError(f"Invalid row number: {row_key}")
+            normalized_heights[row_number] = _validate_dimension_value(
+                height_value, f"Height for row {row_number}"
+            )
+
+        with safe_workbook(filepath, save=not dry_run) as wb:
+            if sheet_name not in wb.sheetnames:
+                raise SheetError(f"Sheet '{sheet_name}' not found")
+
+            worksheet = wb[sheet_name]
+            changes = []
+            for row_number, height_value in normalized_heights.items():
+                old_value = worksheet.row_dimensions[row_number].height
+                worksheet.row_dimensions[row_number].height = height_value
+                changes.append(
+                    {
+                        "type": "set_row_height",
+                        "sheet_name": sheet_name,
+                        "row": row_number,
+                        "old_value": old_value,
+                        "new_value": height_value,
+                    }
+                )
+
+        return {
+            "message": (
+                f"{'Previewed' if dry_run else 'Set'} heights for "
+                f"{len(normalized_heights)} row(s) in sheet '{sheet_name}'"
+            ),
+            "sheet_name": sheet_name,
+            "heights": normalized_heights,
+            "dry_run": dry_run,
+            "changes": changes,
+        }
+    except (ValidationError, SheetError) as e:
+        logger.error(str(e))
+        raise
+    except Exception as e:
+        logger.error(f"Failed to set row heights: {e}")
+        raise SheetError(str(e))
+
 def format_range_string(start_row: int, start_col: int, end_row: int, end_col: int) -> str:
     """Format range string from row and column indices."""
     return f"{get_column_letter(start_col)}{start_row}:{get_column_letter(end_col)}{end_row}"

@@ -6,9 +6,17 @@ from openpyxl.workbook.defined_name import DefinedName
 
 from excel_mcp.server import freeze_panes as freeze_panes_tool
 from excel_mcp.server import list_named_ranges as list_named_ranges_tool
+from excel_mcp.server import set_column_widths as set_column_widths_tool
+from excel_mcp.server import set_row_heights as set_row_heights_tool
 from excel_mcp.server import set_worksheet_visibility as set_worksheet_visibility_tool
 from excel_mcp.server import set_autofilter as set_autofilter_tool
-from excel_mcp.sheet import set_auto_filter, set_freeze_panes, set_sheet_visibility
+from excel_mcp.sheet import (
+    set_auto_filter,
+    set_column_widths,
+    set_freeze_panes,
+    set_row_heights,
+    set_sheet_visibility,
+)
 from excel_mcp.workbook import list_named_ranges
 
 
@@ -98,6 +106,50 @@ def test_set_worksheet_visibility_rejects_hiding_only_visible_sheet(tmp_workbook
         set_sheet_visibility(tmp_workbook, "Sheet1", "hidden")
 
 
+def test_set_column_widths_persists_values(tmp_workbook):
+    result = set_column_widths(tmp_workbook, "Sheet1", {"A": 24, "c": 18.5})
+    assert result["widths"] == {"A": 24.0, "C": 18.5}
+
+    wb = load_workbook(tmp_workbook)
+    ws = wb["Sheet1"]
+    assert ws.column_dimensions["A"].width == 24.0
+    assert ws.column_dimensions["C"].width == 18.5
+    wb.close()
+
+
+def test_set_column_widths_dry_run_does_not_persist(tmp_workbook):
+    result = set_column_widths(tmp_workbook, "Sheet1", {"B": 30}, dry_run=True)
+    assert result["dry_run"] is True
+    assert result["changes"][0]["new_value"] == 30.0
+
+    wb = load_workbook(tmp_workbook)
+    ws = wb["Sheet1"]
+    assert ws.column_dimensions["B"].width != 30.0
+    wb.close()
+
+
+def test_set_row_heights_persists_values(tmp_workbook):
+    result = set_row_heights(tmp_workbook, "Sheet1", {"1": 22, "3": 28.5})
+    assert result["heights"] == {1: 22.0, 3: 28.5}
+
+    wb = load_workbook(tmp_workbook)
+    ws = wb["Sheet1"]
+    assert ws.row_dimensions[1].height == 22.0
+    assert ws.row_dimensions[3].height == 28.5
+    wb.close()
+
+
+def test_set_row_heights_dry_run_does_not_persist(tmp_workbook):
+    result = set_row_heights(tmp_workbook, "Sheet1", {"2": 31}, dry_run=True)
+    assert result["dry_run"] is True
+    assert result["changes"][0]["new_value"] == 31.0
+
+    wb = load_workbook(tmp_workbook)
+    ws = wb["Sheet1"]
+    assert ws.row_dimensions[2].height != 31.0
+    wb.close()
+
+
 def test_list_named_ranges_returns_destinations(named_range_workbook):
     result = list_named_ranges(named_range_workbook)
     assert result == [
@@ -139,3 +191,17 @@ def test_set_worksheet_visibility_tool_returns_json_envelope(multi_sheet_workboo
     assert payload["operation"] == "set_worksheet_visibility"
     assert payload["dry_run"] is True
     assert payload["data"]["visibility"] == "hidden"
+
+
+def test_set_column_widths_tool_returns_json_envelope(tmp_workbook):
+    payload = _load_tool_payload(set_column_widths_tool(tmp_workbook, "Sheet1", {"A": 20}, dry_run=True))
+    assert payload["operation"] == "set_column_widths"
+    assert payload["dry_run"] is True
+    assert payload["data"]["widths"]["A"] == 20.0
+
+
+def test_set_row_heights_tool_returns_json_envelope(tmp_workbook):
+    payload = _load_tool_payload(set_row_heights_tool(tmp_workbook, "Sheet1", {"1": 24}, dry_run=True))
+    assert payload["operation"] == "set_row_heights"
+    assert payload["dry_run"] is True
+    assert payload["data"]["heights"]["1"] == 24.0

@@ -378,44 +378,91 @@ def read_as_table(
                 raise DataError(f"Sheet '{sheet_name}' not found")
 
             ws = wb[sheet_name]
-
-            from openpyxl.utils import column_index_from_string
-            start_col_idx = column_index_from_string(start_col.upper())
-            if end_col:
-                end_col_idx = column_index_from_string(end_col.upper())
-            else:
-                end_col_idx = ws.max_column
-
-            # Read headers
-            headers = []
-            for col in range(start_col_idx, end_col_idx + 1):
-                val = ws.cell(row=header_row, column=col).value
-                headers.append(val)
-
-            # Read data rows
-            total_rows = ws.max_row - header_row
-            if total_rows < 0:
-                total_rows = 0
-
-            limit = max_rows if max_rows else total_rows
-            rows = []
-            for row_idx in range(header_row + 1, header_row + 1 + min(limit, total_rows)):
-                row_data = []
-                for col in range(start_col_idx, end_col_idx + 1):
-                    row_data.append(ws.cell(row=row_idx, column=col).value)
-                rows.append(row_data)
-
-            return {
-                "headers": headers,
-                "rows": rows,
-                "total_rows": total_rows,
-                "truncated": max_rows is not None and total_rows > max_rows,
-                "sheet_name": sheet_name,
-            }
+            return _read_table_from_worksheet(
+                ws,
+                sheet_name,
+                header_row=header_row,
+                start_col=start_col,
+                end_col=end_col,
+                max_rows=max_rows,
+            )
     except DataError:
         raise
     except Exception as e:
         logger.error(f"Failed to read as table: {e}")
+        raise DataError(str(e))
+
+
+def _read_table_from_worksheet(
+    ws: Worksheet,
+    sheet_name: str,
+    *,
+    header_row: int = 1,
+    start_col: str = "A",
+    end_col: Optional[str] = None,
+    max_rows: Optional[int] = None,
+) -> Dict[str, Any]:
+    start_col_idx = column_index_from_string(start_col.upper())
+    if end_col:
+        end_col_idx = column_index_from_string(end_col.upper())
+    else:
+        end_col_idx = ws.max_column
+
+    headers = []
+    for col in range(start_col_idx, end_col_idx + 1):
+        headers.append(ws.cell(row=header_row, column=col).value)
+
+    total_rows = ws.max_row - header_row
+    if total_rows < 0:
+        total_rows = 0
+
+    limit = max_rows if max_rows else total_rows
+    rows = []
+    for row_idx in range(header_row + 1, header_row + 1 + min(limit, total_rows)):
+        row_data = []
+        for col in range(start_col_idx, end_col_idx + 1):
+            row_data.append(ws.cell(row=row_idx, column=col).value)
+        rows.append(row_data)
+
+    return {
+        "headers": headers,
+        "rows": rows,
+        "total_rows": total_rows,
+        "truncated": max_rows is not None and total_rows > max_rows,
+        "sheet_name": sheet_name,
+    }
+
+
+def quick_read(
+    filepath: str,
+    sheet_name: Optional[str] = None,
+    header_row: int = 1,
+    max_rows: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Read a compact table from an explicit sheet or the first sheet automatically."""
+    try:
+        with safe_workbook(str(filepath)) as wb:
+            if not wb.sheetnames:
+                raise DataError("Workbook contains no sheets")
+
+            auto_selected_sheet = sheet_name is None
+            resolved_sheet_name = sheet_name or wb.sheetnames[0]
+            if resolved_sheet_name not in wb.sheetnames:
+                raise DataError(f"Sheet '{resolved_sheet_name}' not found")
+
+            ws = wb[resolved_sheet_name]
+            result = _read_table_from_worksheet(
+                ws,
+                resolved_sheet_name,
+                header_row=header_row,
+                max_rows=max_rows,
+            )
+            result["auto_selected_sheet"] = auto_selected_sheet
+            return result
+    except DataError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to quick read: {e}")
         raise DataError(str(e))
 
 
