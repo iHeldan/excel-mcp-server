@@ -1,5 +1,5 @@
 import pytest
-from excel_mcp.workbook import get_or_create_workbook
+from excel_mcp.workbook import get_or_create_workbook, list_sheets
 
 
 def test_get_or_create_raises_on_missing_file(tmp_path):
@@ -14,10 +14,6 @@ def test_get_or_create_loads_existing_file(tmp_workbook):
     wb = get_or_create_workbook(tmp_workbook)
     assert "Sheet1" in wb.sheetnames
     wb.close()
-
-
-from excel_mcp.workbook import list_sheets
-
 
 def test_list_sheets_returns_names(multi_sheet_workbook):
     result = list_sheets(multi_sheet_workbook)

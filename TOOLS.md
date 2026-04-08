@@ -89,6 +89,8 @@ Returns a compact table object under `data`:
 }
 ```
 
+If `compact=True`, the payload is reduced to `headers` and `rows` unless truncation metadata is required.
+
 ### `read_data_from_excel`
 
 Returns cell metadata under `data`:
@@ -117,6 +119,8 @@ Returns cell metadata under `data`:
 ```
 
 If `preview_only=True`, the payload is limited to the first 10 rows from the selected range and includes `preview_only` and `truncated` flags.
+
+If `compact=True`, cells without real validation rules omit the default `validation: {"has_validation": false}` stub.
 
 ### `search_in_sheet`
 
@@ -163,10 +167,10 @@ Returns matches under `data.matches`:
 
 - `write_data_to_excel(filepath: str, sheet_name: str, data: List[List], start_cell: str = "A1", dry_run: bool = False) -> str`
   Writes tabular data starting at the given cell. Missing target sheets are created automatically. Returns `changes` and supports preview mode.
-- `read_data_from_excel(filepath: str, sheet_name: str, start_cell: str = "A1", end_cell: Optional[str] = None, preview_only: bool = False) -> str`
+- `read_data_from_excel(filepath: str, sheet_name: str, start_cell: str = "A1", end_cell: Optional[str] = None, preview_only: bool = False, compact: bool = False) -> str`
   Returns cell range data with row, column, address, value, and validation metadata under the shared envelope.
-- `read_excel_as_table(filepath: str, sheet_name: str, header_row: int = 1, max_rows: Optional[int] = None) -> str`
-  Returns `headers`, `rows`, `total_rows`, `truncated`, and `sheet_name`.
+- `read_excel_as_table(filepath: str, sheet_name: str, header_row: int = 1, max_rows: Optional[int] = None, compact: bool = False) -> str`
+  Returns `headers`, `rows`, `total_rows`, `truncated`, and `sheet_name`. With `compact=True`, only `headers` and `rows` are returned unless truncation metadata is needed.
 - `quick_read(filepath: str, sheet_name: Optional[str] = None, header_row: int = 1, max_rows: Optional[int] = None) -> str`
   Returns a compact table from the requested sheet, or auto-selects the first workbook sheet when `sheet_name` is omitted.
 - `search_in_sheet(filepath: str, sheet_name: str, query: Any, exact: bool = True, max_results: int = 50) -> str`
@@ -233,6 +237,8 @@ Returns matches under `data.matches`:
 
 - `create_table(filepath: str, sheet_name: str, data_range: str, table_name: Optional[str] = None, table_style: str = "TableStyleMedium9") -> str`
   Creates a native Excel table from an existing range.
+- `list_charts(filepath: str, sheet_name: Optional[str] = None) -> str`
+  Lists embedded charts across the workbook or for one worksheet, including chart type, anchor, titles, and series references.
 - `create_chart(filepath: str, sheet_name: str, data_range: str, chart_type: str, target_cell: str, title: str = "", x_axis: str = "", y_axis: str = "") -> str`
   Creates a chart anchored at `target_cell`. Supported chart types are `line`, `bar`, `pie`, `scatter`, and `area`.
 - `create_pivot_table(filepath: str, sheet_name: str, data_range: str, rows: List[str], values: List[str], columns: Optional[List[str]] = None, agg_func: str = "sum") -> str`
@@ -243,6 +249,7 @@ Returns matches under `data.matches`:
 - Use `list_all_sheets` before reading unfamiliar workbooks.
 - Use `read_excel_as_table` when the source data is tabular and headers matter.
 - Use `read_data_from_excel` when you need cell addresses or validation metadata.
+- Use `compact=True` on read tools when you want to minimize response size for agent workflows.
 - Use `search_in_sheet` to find a value before mutating a workbook.
 - Prefer `streamable-http` for long-running remote integrations.
 - Prefer `stdio` for local desktop MCP clients.

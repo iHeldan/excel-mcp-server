@@ -6,10 +6,17 @@ from excel_mcp.data import (
     read_as_table,
     read_excel_range,
     read_excel_range_with_metadata,
+    search_cells,
     update_rows_by_key,
     write_data,
 )
-from excel_mcp.server import list_all_sheets, quick_read, read_data_from_excel, search_in_sheet
+from excel_mcp.server import (
+    list_all_sheets,
+    quick_read,
+    read_data_from_excel,
+    read_excel_as_table as read_excel_as_table_tool,
+    search_in_sheet,
+)
 
 
 def _load_tool_payload(raw: str) -> dict:
@@ -62,10 +69,6 @@ def test_read_as_table_with_max_rows(tmp_workbook):
 def test_read_as_table_custom_header_row(tmp_workbook):
     result = read_as_table(tmp_workbook, "Sheet1", header_row=2)
     assert result["headers"] == ["Alice", 30, "Helsinki"]
-
-
-from excel_mcp.data import search_cells
-
 
 def test_search_cells_finds_exact_match(tmp_workbook):
     results = search_cells(tmp_workbook, "Sheet1", "Alice")
@@ -122,6 +125,63 @@ def test_read_data_from_excel_preview_only_limits_output(tmp_path):
 
     assert len(preview_rows) == 10
     assert payload["data"]["preview_only"] is True
+    assert payload["data"]["truncated"] is True
+
+
+def test_read_data_from_excel_compact_omits_default_validation(tmp_workbook):
+    payload = _load_tool_payload(read_data_from_excel(tmp_workbook, "Sheet1", compact=True))
+    first_cell = payload["data"]["cells"][0]
+
+    assert first_cell["address"] == "A1"
+    assert "validation" not in first_cell
+
+
+def test_read_data_from_excel_compact_keeps_real_validation(tmp_path):
+    from openpyxl import Workbook
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    filepath = tmp_path / "validated.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["A1"] = "Status"
+    ws["A2"] = "Open"
+    validation = DataValidation(type="list", formula1='"Open,Closed"')
+    validation.add("A2")
+    ws.add_data_validation(validation)
+    wb.save(filepath)
+    wb.close()
+
+    payload = _load_tool_payload(read_data_from_excel(str(filepath), "Sheet1", compact=True))
+    cells_by_address = {cell["address"]: cell for cell in payload["data"]["cells"]}
+
+    assert "validation" in cells_by_address["A2"]
+    assert cells_by_address["A2"]["validation"]["has_validation"] is True
+    assert cells_by_address["A2"]["validation"]["allowed_values"] == ["Open", "Closed"]
+
+
+def test_read_excel_as_table_compact_omits_nonessential_metadata(tmp_workbook):
+    payload = _load_tool_payload(read_excel_as_table_tool(tmp_workbook, "Sheet1", compact=True))
+
+    assert payload["operation"] == "read_excel_as_table"
+    assert payload["data"] == {
+        "headers": ["Name", "Age", "City"],
+        "rows": [
+            ["Alice", 30, "Helsinki"],
+            ["Bob", 25, "Tampere"],
+            ["Carol", 35, "Turku"],
+            ["Dave", 28, "Oulu"],
+            ["Eve", 32, "Espoo"],
+        ],
+    }
+
+
+def test_read_excel_as_table_compact_preserves_truncation_metadata(tmp_workbook):
+    payload = _load_tool_payload(read_excel_as_table_tool(tmp_workbook, "Sheet1", max_rows=2, compact=True))
+
+    assert payload["data"]["headers"] == ["Name", "Age", "City"]
+    assert payload["data"]["rows"] == [["Alice", 30, "Helsinki"], ["Bob", 25, "Tampere"]]
+    assert payload["data"]["total_rows"] == 5
     assert payload["data"]["truncated"] is True
 
 

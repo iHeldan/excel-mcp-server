@@ -1,8 +1,19 @@
+import json
+
 import pytest
 from openpyxl import load_workbook
 
-from excel_mcp.chart import ChartType, create_chart_in_sheet
+from excel_mcp.chart import ChartType, create_chart_in_sheet, list_charts
 from excel_mcp.exceptions import ValidationError, ChartError
+from excel_mcp.server import list_charts as list_charts_tool
+
+
+def _load_tool_payload(raw: str) -> dict:
+    payload = json.loads(raw)
+    assert payload["ok"] is True
+    assert "operation" in payload
+    assert "message" in payload
+    return payload
 
 
 @pytest.fixture
@@ -88,6 +99,54 @@ def test_chart_with_axis_labels(chart_workbook):
         title="Revenue", x_axis="Month", y_axis="EUR",
     )
     assert result["details"]["data_range"] == "A1:B5"
+
+
+def test_list_charts_returns_created_chart_metadata(chart_workbook):
+    create_chart_in_sheet(
+        chart_workbook, "Sales", "A1:C5", "bar", "E1", title="Revenue", x_axis="Month", y_axis="EUR"
+    )
+
+    charts = list_charts(chart_workbook)
+
+    assert len(charts) == 1
+    assert charts[0]["sheet_name"] == "Sales"
+    assert charts[0]["chart_type"] == "bar"
+    assert charts[0]["title"] == "Revenue"
+    assert charts[0]["x_axis_title"] == "Month"
+    assert charts[0]["y_axis_title"] == "EUR"
+    assert charts[0]["anchor"] == "E1"
+    assert len(charts[0]["series"]) == 2
+
+
+def test_list_charts_can_filter_by_sheet(chart_workbook):
+    wb = load_workbook(chart_workbook)
+    ws = wb.create_sheet("Inventory")
+    ws["A1"] = "Item"
+    ws["B1"] = "Count"
+    ws["A2"] = "Widget"
+    ws["B2"] = 10
+    ws["A3"] = "Gadget"
+    ws["B3"] = 5
+    wb.save(chart_workbook)
+    wb.close()
+
+    create_chart_in_sheet(chart_workbook, "Sales", "A1:B5", "line", "E1", title="Sales Revenue")
+    create_chart_in_sheet(chart_workbook, "Inventory", "A1:B3", "bar", "E1", title="Inventory Count")
+
+    charts = list_charts(chart_workbook, sheet_name="Inventory")
+
+    assert len(charts) == 1
+    assert charts[0]["sheet_name"] == "Inventory"
+    assert charts[0]["title"] == "Inventory Count"
+
+
+def test_list_charts_tool_returns_json_envelope(chart_workbook):
+    create_chart_in_sheet(chart_workbook, "Sales", "A1:B5", "bar", "E1", title="Revenue")
+
+    payload = _load_tool_payload(list_charts_tool(chart_workbook))
+
+    assert payload["operation"] == "list_charts"
+    assert payload["data"]["charts"][0]["title"] == "Revenue"
 
 
 # --- Error cases ---

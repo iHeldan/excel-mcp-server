@@ -73,9 +73,7 @@ def test_pivot_average_aggregation(pivot_workbook):
 
 
 def test_pivot_multiple_row_fields(pivot_workbook):
-    result = create_pivot_table(
-        pivot_workbook, "Data", "A1:D6", rows=["Region", "Product"], values=["Sales"]
-    )
+    create_pivot_table(pivot_workbook, "Data", "A1:D6", rows=["Region", "Product"], values=["Sales"])
     wb = load_workbook(pivot_workbook)
     pivot_ws = wb["Data_pivot"]
     assert pivot_ws["A1"].value == "Region"
@@ -84,9 +82,7 @@ def test_pivot_multiple_row_fields(pivot_workbook):
 
 
 def test_pivot_multiple_value_fields(pivot_workbook):
-    result = create_pivot_table(
-        pivot_workbook, "Data", "A1:D6", rows=["Region"], values=["Sales", "Quantity"]
-    )
+    create_pivot_table(pivot_workbook, "Data", "A1:D6", rows=["Region"], values=["Sales", "Quantity"])
     wb = load_workbook(pivot_workbook)
     pivot_ws = wb["Data_pivot"]
     assert "Sales (sum)" in pivot_ws["B1"].value
@@ -95,9 +91,7 @@ def test_pivot_multiple_value_fields(pivot_workbook):
 
 
 def test_pivot_count_aggregation(pivot_workbook):
-    result = create_pivot_table(
-        pivot_workbook, "Data", "A1:D6", rows=["Region"], values=["Sales"], agg_func="count"
-    )
+    create_pivot_table(pivot_workbook, "Data", "A1:D6", rows=["Region"], values=["Sales"], agg_func="count")
     wb = load_workbook(pivot_workbook)
     pivot_ws = wb["Data_pivot"]
     # North has 3 rows, South has 2

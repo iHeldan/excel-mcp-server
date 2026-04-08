@@ -21,6 +21,17 @@ def _range_string(start_row: int, start_col: int, end_row: int, end_col: int) ->
     return f"{_cell_address(start_row, start_col)}:{_cell_address(end_row, end_col)}"
 
 
+def _compact_table_payload(table_data: Dict[str, Any]) -> Dict[str, Any]:
+    compact_data = {
+        "headers": table_data["headers"],
+        "rows": table_data["rows"],
+    }
+    if table_data["truncated"]:
+        compact_data["total_rows"] = table_data["total_rows"]
+        compact_data["truncated"] = True
+    return compact_data
+
+
 def _get_header_map(ws: Worksheet, header_row: int) -> Dict[str, int]:
     header_map: Dict[str, int] = {}
     for col in range(1, ws.max_column + 1):
@@ -258,7 +269,8 @@ def read_excel_range_with_metadata(
     sheet_name: str,
     start_cell: str = "A1",
     end_cell: Optional[str] = None,
-    include_validation: bool = True
+    include_validation: bool = True,
+    compact: bool = False,
 ) -> Dict[str, Any]:
     """Read data from Excel range with cell metadata including validation rules.
 
@@ -345,7 +357,7 @@ def read_excel_range_with_metadata(
                         validation_info = get_data_validation_for_cell(ws, cell_address)
                         if validation_info:
                             cell_data["validation"] = validation_info
-                        else:
+                        elif not compact:
                             cell_data["validation"] = {"has_validation": False}
 
                     range_data["cells"].append(cell_data)
@@ -367,6 +379,7 @@ def read_as_table(
     start_col: str = "A",
     end_col: Optional[str] = None,
     max_rows: Optional[int] = None,
+    compact: bool = False,
 ) -> Dict[str, Any]:
     """Read Excel data as a compact table with headers.
 
@@ -385,6 +398,7 @@ def read_as_table(
                 start_col=start_col,
                 end_col=end_col,
                 max_rows=max_rows,
+                compact=compact,
             )
     except DataError:
         raise
@@ -401,6 +415,7 @@ def _read_table_from_worksheet(
     start_col: str = "A",
     end_col: Optional[str] = None,
     max_rows: Optional[int] = None,
+    compact: bool = False,
 ) -> Dict[str, Any]:
     start_col_idx = column_index_from_string(start_col.upper())
     if end_col:
@@ -424,13 +439,16 @@ def _read_table_from_worksheet(
             row_data.append(ws.cell(row=row_idx, column=col).value)
         rows.append(row_data)
 
-    return {
+    result = {
         "headers": headers,
         "rows": rows,
         "total_rows": total_rows,
         "truncated": max_rows is not None and total_rows > max_rows,
         "sheet_name": sheet_name,
     }
+    if compact:
+        return _compact_table_payload(result)
+    return result
 
 
 def quick_read(

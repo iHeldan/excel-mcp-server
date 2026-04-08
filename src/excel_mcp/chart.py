@@ -1,18 +1,20 @@
-from typing import Any, Optional, Dict
-import logging
 from enum import Enum
+import logging
+from typing import Any, Dict, Optional
 
 from openpyxl.chart import (
-    BarChart, LineChart, PieChart, ScatterChart, 
-    AreaChart, Reference, Series
+    AreaChart,
+    BarChart,
+    LineChart,
+    PieChart,
+    Reference,
+    ScatterChart,
+    Series,
 )
 from openpyxl.chart.label import DataLabelList
 from openpyxl.chart.legend import Legend
 from openpyxl.chart.axis import ChartLines
-from openpyxl.drawing.spreadsheet_drawing import (
-    AnchorMarker, OneCellAnchor, SpreadsheetDrawing
-)
-from openpyxl.utils import column_index_from_string
+from openpyxl.utils import column_index_from_string, get_column_letter
 
 from .cell_utils import parse_cell_range
 from .exceptions import ValidationError, ChartError
@@ -50,6 +52,166 @@ class ChartStyle:
         self.grid_lines = grid_lines
         self.style_id = style_id
 
+
+def _extract_text_runs(rich_text: Any) -> Optional[str]:
+    parts: list[str] = []
+    for paragraph in getattr(rich_text, "p", []) or []:
+        for run in getattr(paragraph, "r", []) or []:
+            text = getattr(run, "t", None)
+            if text:
+                parts.append(text)
+        for field in getattr(paragraph, "fld", []) or []:
+            text = getattr(field, "t", None)
+            if text:
+                parts.append(text)
+    return "".join(parts) or None
+
+
+def _extract_title_text(title: Any) -> Optional[str]:
+    if title is None:
+        return None
+    if isinstance(title, str):
+        return title or None
+
+    tx = getattr(title, "tx", None)
+    if tx is not None:
+        rich_text = getattr(tx, "rich", None)
+        if rich_text is not None:
+            extracted = _extract_text_runs(rich_text)
+            if extracted:
+                return extracted
+
+        str_ref = getattr(tx, "strRef", None)
+        if str_ref is not None and getattr(str_ref, "f", None):
+            return str_ref.f
+
+    str_ref = getattr(title, "strRef", None)
+    if str_ref is not None and getattr(str_ref, "f", None):
+        return str_ref.f
+
+    value = getattr(title, "v", None)
+    if value is not None:
+        return str(value)
+
+    return None
+
+
+def _extract_reference_formula(data_source: Any) -> Optional[str]:
+    if data_source is None:
+        return None
+
+    for attr_name in ("numRef", "strRef", "multiLvlStrRef"):
+        reference = getattr(data_source, attr_name, None)
+        if reference is not None and getattr(reference, "f", None):
+            return reference.f
+
+    return None
+
+
+def _extract_chart_anchor(chart: Any) -> Optional[str]:
+    anchor = getattr(chart, "anchor", None)
+    marker = getattr(anchor, "_from", None)
+    if marker is None:
+        return None
+    return f"{get_column_letter(marker.col + 1)}{marker.row + 1}"
+
+
+def _extract_series_metadata(series: Any) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {}
+
+    title = _extract_title_text(getattr(series, "tx", None))
+    if title:
+        metadata["title"] = title
+
+    categories = _extract_reference_formula(getattr(series, "cat", None))
+    if categories:
+        metadata["categories"] = categories
+
+    x_values = _extract_reference_formula(getattr(series, "xVal", None))
+    if x_values:
+        metadata["x_values"] = x_values
+
+    values = _extract_reference_formula(getattr(series, "val", None))
+    if values:
+        metadata["values"] = values
+
+    y_values = _extract_reference_formula(getattr(series, "yVal", None))
+    if y_values:
+        metadata["y_values"] = y_values
+
+    return metadata
+
+
+def _chart_type_name(chart: Any) -> str:
+    class_name = type(chart).__name__
+    if class_name.endswith("Chart"):
+        return class_name.removesuffix("Chart").lower()
+    return class_name.lower()
+
+
+def list_charts(
+    filepath: str,
+    sheet_name: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """List embedded charts for one worksheet or the whole workbook."""
+    try:
+        with safe_workbook(filepath) as wb:
+            if sheet_name is not None and sheet_name not in wb.sheetnames:
+                raise ValidationError(f"Sheet '{sheet_name}' not found")
+
+            sheet_names = [sheet_name] if sheet_name is not None else list(wb.sheetnames)
+            charts: list[dict[str, Any]] = []
+
+            for current_sheet_name in sheet_names:
+                worksheet = wb[current_sheet_name]
+                for chart_index, chart in enumerate(getattr(worksheet, "_charts", []), start=1):
+                    series = getattr(chart, "ser", None) or list(getattr(chart, "series", []))
+                    chart_info = {
+                        "sheet_name": current_sheet_name,
+                        "chart_index": chart_index,
+                        "chart_type": _chart_type_name(chart),
+                        "anchor": _extract_chart_anchor(chart),
+                        "title": _extract_title_text(getattr(chart, "title", None)),
+                        "x_axis_title": _extract_title_text(
+                            getattr(getattr(chart, "x_axis", None), "title", None)
+                        ),
+                        "y_axis_title": _extract_title_text(
+                            getattr(getattr(chart, "y_axis", None), "title", None)
+                        ),
+                        "legend_position": getattr(getattr(chart, "legend", None), "position", None),
+                        "style": getattr(chart, "style", None),
+                        "series": [_extract_series_metadata(item) for item in series],
+                    }
+                    charts.append({key: value for key, value in chart_info.items() if value is not None})
+
+            return charts
+
+    except ValidationError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list charts: {e}")
+        raise ChartError(str(e))
+
+
+def _validate_target_cell(target_cell: str) -> None:
+    if not target_cell:
+        raise ValidationError("Invalid target cell format: target cell is required")
+
+    column_part = "".join(character for character in target_cell if character.isalpha())
+    row_part = "".join(character for character in target_cell if character.isdigit())
+    if not column_part or not row_part:
+        raise ValidationError(f"Invalid target cell format: {target_cell}")
+
+    try:
+        column_index_from_string(column_part)
+        row_index = int(row_part)
+    except ValueError as e:
+        raise ValidationError(f"Invalid target cell: {str(e)}") from e
+
+    if row_index < 1:
+        raise ValidationError(f"Invalid target cell: {target_cell}")
+
+
 def create_chart_in_sheet(
     filepath: str,
     sheet_name: str,
@@ -75,12 +237,6 @@ def create_chart_in_sheet(
                 raise ValidationError(f"Sheet '{sheet_name}' not found")
 
             worksheet = wb[sheet_name]
-
-            # Initialize collections if they don't exist
-            if not hasattr(worksheet, '_drawings'):
-                worksheet._drawings = []
-            if not hasattr(worksheet, '_charts'):
-                worksheet._charts = []
 
             # Parse the data range
             if "!" in data_range:
@@ -207,26 +363,10 @@ def create_chart_in_sheet(
 
             # Create drawing and anchor
             try:
-                drawing = SpreadsheetDrawing()
-                drawing.chart = chart
-
-                # Validate target cell format
-                if not target_cell or not any(c.isalpha() for c in target_cell) or not any(c.isdigit() for c in target_cell):
-                    raise ValidationError(f"Invalid target cell format: {target_cell}")
-
-                # Create anchor
-                col = column_index_from_string(target_cell[0]) - 1
-                row = int(target_cell[1:]) - 1
-                anchor = OneCellAnchor()
-                anchor._from = AnchorMarker(col=col, row=row)
-                drawing.anchor = anchor
-
-                # Add to worksheet
-                worksheet._drawings.append(drawing)
-                worksheet._charts.append(chart)
-            except ValueError as e:
-                logger.error(f"Invalid target cell: {e}")
-                raise ValidationError(f"Invalid target cell: {str(e)}")
+                _validate_target_cell(target_cell)
+                worksheet.add_chart(chart, target_cell)
+            except ValidationError:
+                raise
             except Exception as e:
                 logger.error(f"Failed to create chart drawing: {e}")
                 raise ChartError(f"Failed to create chart drawing: {str(e)}")

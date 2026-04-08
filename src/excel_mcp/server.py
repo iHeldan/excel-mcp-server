@@ -23,7 +23,7 @@ from excel_mcp.validation import (
     validate_formula_in_cell_operation as validate_formula_impl,
     validate_range_in_sheet_operation as validate_range_impl
 )
-from excel_mcp.chart import create_chart_in_sheet as create_chart_impl
+from excel_mcp.chart import create_chart_in_sheet as create_chart_impl, list_charts as list_charts_impl
 from excel_mcp.workbook import get_workbook_info, list_named_ranges as list_named_ranges_impl
 from excel_mcp.data import (
     append_table_rows as append_table_rows_impl,
@@ -305,7 +305,8 @@ def read_data_from_excel(
     sheet_name: str,
     start_cell: str = "A1",
     end_cell: Optional[str] = None,
-    preview_only: bool = False
+    preview_only: bool = False,
+    compact: bool = False,
 ) -> str:
     """
     Read data from Excel worksheet with cell metadata including validation rules.
@@ -316,6 +317,7 @@ def read_data_from_excel(
         start_cell: Starting cell (default A1)
         end_cell: Ending cell (optional, auto-expands if not provided)
         preview_only: Whether to return preview only
+        compact: Whether to omit default validation metadata for smaller responses
     
     Returns:  
     JSON string containing structured cell data with validation metadata.
@@ -328,7 +330,8 @@ def read_data_from_excel(
             full_path,
             sheet_name,
             start_cell,
-            end_cell
+            end_cell,
+            compact=compact,
         )
         if not result:
             result = {"range": f"{start_cell}:{end_cell}" if end_cell else start_cell, "sheet_name": sheet_name, "cells": []}
@@ -375,6 +378,7 @@ def read_excel_as_table(
     sheet_name: str,
     header_row: int = 1,
     max_rows: Optional[int] = None,
+    compact: bool = False,
 ) -> str:
     """
     Read Excel data as a compact table with headers and rows.
@@ -382,7 +386,13 @@ def read_excel_as_table(
     """
     return _run_tool(
         "read_excel_as_table",
-        lambda: read_as_table(get_excel_path(filepath), sheet_name, header_row=header_row, max_rows=max_rows),
+        lambda: read_as_table(
+            get_excel_path(filepath),
+            sheet_name,
+            header_row=header_row,
+            max_rows=max_rows,
+            compact=compact,
+        ),
     )
 
 @mcp.tool(
@@ -510,6 +520,21 @@ def create_chart(
         )
 
     return _run_tool("create_chart", action)
+
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="List Charts",
+        readOnlyHint=True,
+    ),
+)
+def list_charts(filepath: str, sheet_name: Optional[str] = None) -> str:
+    """List embedded charts in a workbook or worksheet."""
+    def action() -> Any:
+        return {"charts": list_charts_impl(get_excel_path(filepath), sheet_name=sheet_name)}
+
+    return _run_tool("list_charts", action)
 
 @mcp.tool(
     structured_output=False,

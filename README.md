@@ -100,20 +100,20 @@ http://127.0.0.1:8017/sse
 
 ## Tooling Overview
 
-The server currently registers 38 MCP tools across these groups:
+The server currently registers 39 MCP tools across these groups:
 
 - workbook overview: `create_workbook`, `create_worksheet`, `get_workbook_metadata`, `list_named_ranges`, `list_all_sheets`, `list_tables`
 - data access: `quick_read`, `read_data_from_excel`, `read_excel_as_table`, `search_in_sheet`, `write_data_to_excel`, `append_table_rows`, `update_rows_by_key`
 - worksheet and range changes: `copy_worksheet`, `delete_worksheet`, `rename_worksheet`, `set_worksheet_visibility`, `copy_range`, `delete_range`, `insert_rows`, `insert_columns`, `delete_sheet_rows`, `delete_sheet_columns`
 - formatting and layout: `format_range`, `freeze_panes`, `set_autofilter`, `set_column_widths`, `set_row_heights`, `merge_cells`, `unmerge_cells`, `get_merged_cells`
 - formulas and validation: `apply_formula`, `validate_formula_syntax`, `validate_excel_range`, `get_data_validation_info`
-- analysis and structure: `create_table`, `create_chart`, `create_pivot_table`
+- analysis and structure: `create_table`, `list_charts`, `create_chart`, `create_pivot_table`
 
 The most agent-friendly read tools are:
 
 - `quick_read`: single-call compact table read that auto-selects the first sheet when needed
 - `list_all_sheets`: quick workbook inventory with sheet sizes and emptiness flags
-- `read_excel_as_table`: compact `headers + rows` output for structured datasets
+- `read_excel_as_table`: compact `headers + rows` output for structured datasets, with `compact=True` for the smallest payload
 - `search_in_sheet`: exact or partial value search across a worksheet
 
 See [TOOLS.md](TOOLS.md) for the full reference.
@@ -160,6 +160,12 @@ Run tests:
 uv run --extra dev pytest -q
 ```
 
+Run lint checks:
+
+```bash
+uv run --extra dev ruff check src tests
+```
+
 Run the package locally:
 
 ```bash
@@ -186,6 +192,8 @@ uv run sheetforge-mcp stdio
 - `stdio` mode is careful not to write non-protocol text to `stdout`.
 - All tools return structured JSON envelopes, which makes client-side parsing predictable.
 - `read_data_from_excel(..., preview_only=True)` limits the response to the first 10 rows in the selected range and marks the payload as truncated when applicable.
+- `read_data_from_excel(..., compact=True)` omits default validation stubs for cells that do not have validation rules.
+- `read_excel_as_table(..., compact=True)` returns only `headers` and `rows` unless truncation metadata is needed.
 - Core mutation tools support `dry_run=True` so clients can preview changes before saving a workbook.
 
 ## License
