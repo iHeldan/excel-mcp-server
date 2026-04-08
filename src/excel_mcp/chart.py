@@ -27,10 +27,6 @@ class ChartType(str, Enum):
     PIE = "pie"
     SCATTER = "scatter"
     AREA = "area"
-    BUBBLE = "bubble"
-    STOCK = "stock"
-    SURFACE = "surface"
-    RADAR = "radar"
 
 class ChartStyle:
     """Chart style configuration"""
