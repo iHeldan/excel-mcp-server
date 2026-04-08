@@ -73,6 +73,64 @@ def rename_sheet(filepath: str, old_name: str, new_name: str) -> Dict[str, Any]:
         logger.error(f"Failed to rename sheet: {e}")
         raise SheetError(str(e))
 
+
+def set_sheet_visibility(
+    filepath: str,
+    sheet_name: str,
+    visibility: str,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Set worksheet visibility to visible, hidden, or veryHidden."""
+    valid_visibilities = {"visible", "hidden", "veryHidden"}
+
+    try:
+        if visibility not in valid_visibilities:
+            raise ValidationError(
+                f"Invalid worksheet visibility: {visibility}. "
+                "Must be one of: visible, hidden, veryHidden"
+            )
+
+        with safe_workbook(filepath, save=not dry_run) as wb:
+            if sheet_name not in wb.sheetnames:
+                raise SheetError(f"Sheet '{sheet_name}' not found")
+
+            worksheet = wb[sheet_name]
+            previous_visibility = worksheet.sheet_state
+
+            visible_sheets = [ws.title for ws in wb.worksheets if ws.sheet_state == "visible"]
+            if (
+                visibility != "visible"
+                and previous_visibility == "visible"
+                and len(visible_sheets) == 1
+            ):
+                raise SheetError("Cannot hide the only visible sheet in workbook")
+
+            worksheet.sheet_state = visibility
+
+        return {
+            "message": (
+                f"{'Previewed' if dry_run else 'Set'} worksheet visibility for "
+                f"'{sheet_name}' to '{visibility}'"
+            ),
+            "sheet_name": sheet_name,
+            "visibility": visibility,
+            "dry_run": dry_run,
+            "changes": [
+                {
+                    "type": "set_worksheet_visibility",
+                    "sheet_name": sheet_name,
+                    "old_value": previous_visibility,
+                    "new_value": visibility,
+                }
+            ],
+        }
+    except (ValidationError, SheetError) as e:
+        logger.error(str(e))
+        raise
+    except Exception as e:
+        logger.error(f"Failed to set worksheet visibility: {e}")
+        raise SheetError(str(e))
+
 def format_range_string(start_row: int, start_col: int, end_row: int, end_col: int) -> str:
     """Format range string from row and column indices."""
     return f"{get_column_letter(start_col)}{start_row}:{get_column_letter(end_col)}{end_row}"

@@ -156,6 +156,8 @@ Returns matches under `data.matches`:
   Returns workbook defined names, their values, and any sheet/range destinations.
 - `list_all_sheets(filepath: str) -> str`
   Returns one entry per worksheet, including `rows`, `columns`, `column_range`, and `is_empty`.
+- `list_tables(filepath: str, sheet_name: Optional[str] = None) -> str`
+  Returns native Excel tables across the workbook or for one worksheet, including `sheet_name`, `table_name`, `range`, and `style`.
 
 ## Read, Search, And Write Tools
 
@@ -206,6 +208,8 @@ Returns matches under `data.matches`:
   Deletes a worksheet. The final remaining sheet cannot be deleted.
 - `rename_worksheet(filepath: str, old_name: str, new_name: str) -> str`
   Renames a worksheet.
+- `set_worksheet_visibility(filepath: str, sheet_name: str, visibility: str, dry_run: bool = False) -> str`
+  Sets worksheet visibility to `visible`, `hidden`, or `veryHidden`, and supports preview mode.
 - `copy_range(filepath: str, sheet_name: str, source_start: str, source_end: str, target_start: str, target_sheet: Optional[str] = None, dry_run: bool = False) -> str`
   Copies a range to another location, optionally on a different sheet, and supports preview mode.
 - `delete_range(filepath: str, sheet_name: str, start_cell: str, end_cell: str, shift_direction: str = "up", dry_run: bool = False) -> str`

@@ -6,8 +6,9 @@ from openpyxl.workbook.defined_name import DefinedName
 
 from excel_mcp.server import freeze_panes as freeze_panes_tool
 from excel_mcp.server import list_named_ranges as list_named_ranges_tool
+from excel_mcp.server import set_worksheet_visibility as set_worksheet_visibility_tool
 from excel_mcp.server import set_autofilter as set_autofilter_tool
-from excel_mcp.sheet import set_auto_filter, set_freeze_panes
+from excel_mcp.sheet import set_auto_filter, set_freeze_panes, set_sheet_visibility
 from excel_mcp.workbook import list_named_ranges
 
 
@@ -73,6 +74,30 @@ def test_set_autofilter_dry_run_does_not_persist(tmp_workbook):
     wb.close()
 
 
+def test_set_worksheet_visibility_persists_value(multi_sheet_workbook):
+    result = set_sheet_visibility(multi_sheet_workbook, "Inventory", "hidden")
+    assert result["visibility"] == "hidden"
+
+    wb = load_workbook(multi_sheet_workbook)
+    assert wb["Inventory"].sheet_state == "hidden"
+    wb.close()
+
+
+def test_set_worksheet_visibility_dry_run_does_not_persist(multi_sheet_workbook):
+    result = set_sheet_visibility(multi_sheet_workbook, "Inventory", "veryHidden", dry_run=True)
+    assert result["dry_run"] is True
+    assert result["changes"][0]["new_value"] == "veryHidden"
+
+    wb = load_workbook(multi_sheet_workbook)
+    assert wb["Inventory"].sheet_state == "visible"
+    wb.close()
+
+
+def test_set_worksheet_visibility_rejects_hiding_only_visible_sheet(tmp_workbook):
+    with pytest.raises(Exception, match="only visible sheet"):
+        set_sheet_visibility(tmp_workbook, "Sheet1", "hidden")
+
+
 def test_list_named_ranges_returns_destinations(named_range_workbook):
     result = list_named_ranges(named_range_workbook)
     assert result == [
@@ -105,3 +130,12 @@ def test_list_named_ranges_tool_returns_json_envelope(named_range_workbook):
     payload = _load_tool_payload(list_named_ranges_tool(named_range_workbook))
     assert payload["operation"] == "list_named_ranges"
     assert payload["data"]["named_ranges"][0]["name"] == "PeopleTable"
+
+
+def test_set_worksheet_visibility_tool_returns_json_envelope(multi_sheet_workbook):
+    payload = _load_tool_payload(
+        set_worksheet_visibility_tool(multi_sheet_workbook, "Inventory", "hidden", dry_run=True)
+    )
+    assert payload["operation"] == "set_worksheet_visibility"
+    assert payload["dry_run"] is True
+    assert payload["data"]["visibility"] == "hidden"

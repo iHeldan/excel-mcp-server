@@ -33,11 +33,15 @@ from excel_mcp.data import (
     write_data,
 )
 from excel_mcp.pivot import create_pivot_table as create_pivot_table_impl
-from excel_mcp.tables import create_excel_table as create_table_impl
+from excel_mcp.tables import (
+    create_excel_table as create_table_impl,
+    list_excel_tables as list_tables_impl,
+)
 from excel_mcp.sheet import (
     copy_sheet,
     delete_sheet,
     rename_sheet,
+    set_sheet_visibility,
     merge_range,
     unmerge_range,
     get_merged_ranges,
@@ -539,6 +543,26 @@ def create_table(
 @mcp.tool(
     structured_output=False,
     annotations=ToolAnnotations(
+        title="List Excel Tables",
+        readOnlyHint=True,
+    ),
+)
+def list_tables(
+    filepath: str,
+    sheet_name: Optional[str] = None,
+) -> str:
+    """List native Excel tables for one worksheet or the whole workbook."""
+    def action() -> Any:
+        return {
+            "sheet_name": sheet_name,
+            "tables": list_tables_impl(get_excel_path(filepath), sheet_name=sheet_name),
+        }
+
+    return _run_tool("list_tables", action)
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
         title="Copy Worksheet",
         destructiveHint=True,
     ),
@@ -713,6 +737,30 @@ def set_autofilter(
     return _run_tool(
         "set_autofilter",
         lambda: set_auto_filter(get_excel_path(filepath), sheet_name, range_ref, dry_run=dry_run),
+    )
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Set Worksheet Visibility",
+        destructiveHint=True,
+    ),
+)
+def set_worksheet_visibility(
+    filepath: str,
+    sheet_name: str,
+    visibility: str,
+    dry_run: bool = False,
+) -> str:
+    """Set worksheet visibility to visible, hidden, or veryHidden."""
+    return _run_tool(
+        "set_worksheet_visibility",
+        lambda: set_sheet_visibility(
+            get_excel_path(filepath),
+            sheet_name,
+            visibility,
+            dry_run=dry_run,
+        ),
     )
 
 @mcp.tool(

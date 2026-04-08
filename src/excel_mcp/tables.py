@@ -1,5 +1,6 @@
 import uuid
 import logging
+from typing import Any
 
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from .exceptions import DataError
@@ -64,4 +65,42 @@ def create_excel_table(
 
     except Exception as e:
         logger.error(f"Failed to create table: {e}")
+        raise DataError(str(e))
+
+
+def list_excel_tables(
+    filepath: str,
+    sheet_name: str | None = None,
+) -> list[dict[str, Any]]:
+    """List native Excel tables for one sheet or the whole workbook."""
+    try:
+        with safe_workbook(filepath) as wb:
+            if sheet_name is not None and sheet_name not in wb.sheetnames:
+                raise DataError(f"Sheet '{sheet_name}' not found.")
+
+            sheet_names = [sheet_name] if sheet_name is not None else list(wb.sheetnames)
+            tables: list[dict[str, Any]] = []
+
+            for current_sheet_name in sheet_names:
+                ws = wb[current_sheet_name]
+                for table in ws.tables.values():
+                    style_name = None
+                    if table.tableStyleInfo is not None:
+                        style_name = table.tableStyleInfo.name
+
+                    tables.append(
+                        {
+                            "sheet_name": current_sheet_name,
+                            "table_name": table.displayName,
+                            "range": table.ref,
+                            "style": style_name,
+                        }
+                    )
+
+            return tables
+
+    except DataError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list tables: {e}")
         raise DataError(str(e))

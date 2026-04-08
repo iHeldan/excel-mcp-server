@@ -1,7 +1,8 @@
 import pytest
 from openpyxl import load_workbook
 
-from excel_mcp.tables import create_excel_table
+from excel_mcp.server import list_tables as list_tables_tool
+from excel_mcp.tables import create_excel_table, list_excel_tables
 from excel_mcp.exceptions import DataError
 
 
@@ -48,3 +49,43 @@ def test_create_table_duplicate_name(tmp_workbook):
     create_excel_table(tmp_workbook, "Sheet1", "A1:C3", table_name="Dupl")
     with pytest.raises(DataError):
         create_excel_table(tmp_workbook, "Sheet1", "A1:C3", table_name="Dupl")
+
+
+def test_list_tables_returns_created_table(tmp_workbook):
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers", table_style="TableStyleLight1")
+
+    result = list_excel_tables(tmp_workbook)
+
+    assert result == [
+        {
+            "sheet_name": "Sheet1",
+            "table_name": "Customers",
+            "range": "A1:C6",
+            "style": "TableStyleLight1",
+        }
+    ]
+
+
+def test_list_tables_can_filter_by_sheet(multi_sheet_workbook):
+    create_excel_table(multi_sheet_workbook, "Sales", "A1:B2", table_name="SalesTable")
+    create_excel_table(multi_sheet_workbook, "Inventory", "A1:B2", table_name="InventoryTable")
+
+    result = list_excel_tables(multi_sheet_workbook, sheet_name="Inventory")
+
+    assert result == [
+        {
+            "sheet_name": "Inventory",
+            "table_name": "InventoryTable",
+            "range": "A1:B2",
+            "style": "TableStyleMedium9",
+        }
+    ]
+
+
+def test_list_tables_tool_returns_json_envelope(tmp_workbook):
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
+
+    payload = list_tables_tool(tmp_workbook)
+
+    assert '"operation": "list_tables"' in payload
+    assert '"table_name": "Customers"' in payload
