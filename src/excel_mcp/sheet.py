@@ -140,6 +140,21 @@ def _validate_dimension_value(value: Any, label: str) -> float:
     return float(value)
 
 
+def _worksheet_has_data(worksheet: Worksheet) -> bool:
+    return not (
+        worksheet.max_row == 1
+        and worksheet.max_column == 1
+        and worksheet.cell(1, 1).value is None
+    )
+
+
+def _display_width(value: Any) -> int:
+    if value is None:
+        return 0
+    text = str(value)
+    return max((len(line) for line in text.splitlines()), default=0)
+
+
 def set_column_widths(
     filepath: str,
     sheet_name: str,
@@ -256,6 +271,81 @@ def set_row_heights(
         raise
     except Exception as e:
         logger.error(f"Failed to set row heights: {e}")
+        raise SheetError(str(e))
+
+
+def autofit_columns(
+    filepath: str,
+    sheet_name: str,
+    columns: Optional[list[str]] = None,
+    min_width: float = 8.43,
+    max_width: Optional[float] = None,
+    padding: float = 2.0,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Auto-fit worksheet columns based on the longest displayed value."""
+    try:
+        min_width_value = _validate_dimension_value(min_width, "Minimum width")
+        padding_value = _validate_dimension_value(padding, "Padding")
+        max_width_value = None
+        if max_width is not None:
+            max_width_value = _validate_dimension_value(max_width, "Maximum width")
+            if max_width_value < min_width_value:
+                raise ValidationError("Maximum width must be greater than or equal to minimum width")
+
+        with safe_workbook(filepath, save=not dry_run) as wb:
+            if sheet_name not in wb.sheetnames:
+                raise SheetError(f"Sheet '{sheet_name}' not found")
+
+            worksheet = wb[sheet_name]
+            if columns:
+                normalized_columns = []
+                for column_key in columns:
+                    column_letter = str(column_key).strip().upper()
+                    try:
+                        column_index_from_string(column_letter)
+                    except ValueError as e:
+                        raise ValidationError(f"Invalid column letter: {column_key}") from e
+                    normalized_columns.append(column_letter)
+            else:
+                if not _worksheet_has_data(worksheet):
+                    raise ValidationError("Worksheet has no populated cells to auto-fit")
+                normalized_columns = [
+                    get_column_letter(column_index)
+                    for column_index in range(1, worksheet.max_column + 1)
+                ]
+
+            fitted_widths: Dict[str, float] = {}
+            for column_letter in normalized_columns:
+                column_index = column_index_from_string(column_letter)
+                longest_value = 0
+                for row_index in range(1, worksheet.max_row + 1):
+                    longest_value = max(
+                        longest_value,
+                        _display_width(worksheet.cell(row=row_index, column=column_index).value),
+                    )
+
+                computed_width = max(min_width_value, float(longest_value) + padding_value)
+                if max_width_value is not None:
+                    computed_width = min(computed_width, max_width_value)
+                fitted_widths[column_letter] = computed_width
+                worksheet.column_dimensions[column_letter].width = computed_width
+
+        return {
+            "message": (
+                f"{'Previewed' if dry_run else 'Auto-fit'} "
+                f"{len(fitted_widths)} column(s) in sheet '{sheet_name}'"
+            ),
+            "sheet_name": sheet_name,
+            "columns_fitted": len(fitted_widths),
+            "widths": fitted_widths,
+            "dry_run": dry_run,
+        }
+    except (ValidationError, SheetError) as e:
+        logger.error(str(e))
+        raise
+    except Exception as e:
+        logger.error(f"Failed to auto-fit columns: {e}")
         raise SheetError(str(e))
 
 def format_range_string(start_row: int, start_col: int, end_row: int, end_col: int) -> str:

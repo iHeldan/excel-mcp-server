@@ -39,6 +39,7 @@ from excel_mcp.tables import (
     list_excel_tables as list_tables_impl,
 )
 from excel_mcp.sheet import (
+    autofit_columns as autofit_columns_impl,
     copy_sheet,
     delete_sheet,
     rename_sheet,
@@ -263,6 +264,7 @@ def format_range(
     protection: Optional[Dict[str, Any]] = None,
     conditional_format: Optional[Dict[str, Any]] = None,
     dry_run: bool = False,
+    include_changes: Optional[bool] = None,
 ) -> str:
     """Apply formatting to a range of cells."""
     def action() -> Any:
@@ -289,9 +291,40 @@ def format_range(
             protection=protection,
             conditional_format=conditional_format,
             dry_run=dry_run,
+            include_changes=include_changes,
         )
 
     return _run_tool("format_range", action)
+
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Format Multiple Ranges",
+        destructiveHint=True,
+    ),
+)
+def format_ranges(
+    filepath: str,
+    sheet_name: str,
+    ranges: List[Dict[str, Any]],
+    dry_run: bool = False,
+    include_changes: Optional[bool] = None,
+) -> str:
+    """Apply formatting to multiple ranges in a single workbook pass."""
+    def action() -> Any:
+        full_path = get_excel_path(filepath)
+        from excel_mcp.formatting import format_ranges as format_ranges_impl
+
+        return format_ranges_impl(
+            filepath=full_path,
+            sheet_name=sheet_name,
+            ranges=ranges,
+            dry_run=dry_run,
+            include_changes=include_changes,
+        )
+
+    return _run_tool("format_ranges", action)
 
 @mcp.tool(
     structured_output=False,
@@ -433,6 +466,7 @@ def write_data_to_excel(
     data: List[List],
     start_cell: str = "A1",
     dry_run: bool = False,
+    include_changes: Optional[bool] = None,
 ) -> str:
     """
     Write data to Excel worksheet.
@@ -447,7 +481,14 @@ def write_data_to_excel(
     """
     return _run_tool(
         "write_data_to_excel",
-        lambda: write_data(get_excel_path(filepath), sheet_name, data, start_cell, dry_run=dry_run),
+        lambda: write_data(
+            get_excel_path(filepath),
+            sheet_name,
+            data,
+            start_cell,
+            dry_run=dry_run,
+            include_changes=include_changes,
+        ),
     )
 
 @mcp.tool(
@@ -842,6 +883,37 @@ def set_column_widths(
 @mcp.tool(
     structured_output=False,
     annotations=ToolAnnotations(
+        title="Autofit Columns",
+        destructiveHint=True,
+    ),
+)
+def autofit_columns(
+    filepath: str,
+    sheet_name: str,
+    columns: Optional[List[str]] = None,
+    min_width: float = 8.43,
+    max_width: Optional[float] = None,
+    padding: float = 2.0,
+    dry_run: bool = False,
+) -> str:
+    """Auto-fit worksheet columns based on content width."""
+    return _run_tool(
+        "autofit_columns",
+        lambda: autofit_columns_impl(
+            get_excel_path(filepath),
+            sheet_name,
+            columns=columns,
+            min_width=min_width,
+            max_width=max_width,
+            padding=padding,
+            dry_run=dry_run,
+        ),
+    )
+
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
         title="Set Row Heights",
         destructiveHint=True,
     ),
@@ -1144,6 +1216,7 @@ def append_table_rows(
     rows: List[Dict[str, Any]],
     header_row: int = 1,
     dry_run: bool = False,
+    include_changes: Optional[bool] = None,
 ) -> str:
     """Append dictionary-shaped rows by matching worksheet headers."""
     return _run_tool(
@@ -1154,6 +1227,7 @@ def append_table_rows(
             rows,
             header_row=header_row,
             dry_run=dry_run,
+            include_changes=include_changes,
         ),
     )
 
@@ -1172,6 +1246,7 @@ def update_rows_by_key(
     updates: List[Dict[str, Any]],
     header_row: int = 1,
     dry_run: bool = False,
+    include_changes: Optional[bool] = None,
 ) -> str:
     """Update existing table rows using a named key column."""
     return _run_tool(
@@ -1183,6 +1258,7 @@ def update_rows_by_key(
             updates,
             header_row=header_row,
             dry_run=dry_run,
+            include_changes=include_changes,
         ),
     )
 

@@ -6,11 +6,13 @@ from openpyxl.workbook.defined_name import DefinedName
 
 from excel_mcp.server import freeze_panes as freeze_panes_tool
 from excel_mcp.server import list_named_ranges as list_named_ranges_tool
+from excel_mcp.server import autofit_columns as autofit_columns_tool
 from excel_mcp.server import set_column_widths as set_column_widths_tool
 from excel_mcp.server import set_row_heights as set_row_heights_tool
 from excel_mcp.server import set_worksheet_visibility as set_worksheet_visibility_tool
 from excel_mcp.server import set_autofilter as set_autofilter_tool
 from excel_mcp.sheet import (
+    autofit_columns,
     set_auto_filter,
     set_column_widths,
     set_freeze_panes,
@@ -128,6 +130,41 @@ def test_set_column_widths_dry_run_does_not_persist(tmp_workbook):
     wb.close()
 
 
+def test_autofit_columns_persists_computed_width(tmp_workbook):
+    wb = load_workbook(tmp_workbook)
+    ws = wb["Sheet1"]
+    ws["A2"] = "Extraordinarily long customer name"
+    wb.save(tmp_workbook)
+    wb.close()
+
+    result = autofit_columns(tmp_workbook, "Sheet1", columns=["A"])
+    assert result["columns_fitted"] == 1
+    assert result["widths"]["A"] > 20
+
+    wb = load_workbook(tmp_workbook)
+    ws = wb["Sheet1"]
+    assert ws.column_dimensions["A"].width == result["widths"]["A"]
+    wb.close()
+
+
+def test_autofit_columns_dry_run_does_not_persist(tmp_workbook):
+    wb = load_workbook(tmp_workbook)
+    ws = wb["Sheet1"]
+    ws["A2"] = "Extraordinarily long customer name"
+    wb.save(tmp_workbook)
+    original_width = ws.column_dimensions["A"].width
+    wb.close()
+
+    result = autofit_columns(tmp_workbook, "Sheet1", columns=["A"], dry_run=True)
+    assert result["dry_run"] is True
+    assert result["widths"]["A"] > 20
+
+    wb = load_workbook(tmp_workbook)
+    ws = wb["Sheet1"]
+    assert ws.column_dimensions["A"].width == original_width
+    wb.close()
+
+
 def test_set_row_heights_persists_values(tmp_workbook):
     result = set_row_heights(tmp_workbook, "Sheet1", {"1": 22, "3": 28.5})
     assert result["heights"] == {1: 22.0, 3: 28.5}
@@ -198,6 +235,19 @@ def test_set_column_widths_tool_returns_json_envelope(tmp_workbook):
     assert payload["operation"] == "set_column_widths"
     assert payload["dry_run"] is True
     assert payload["data"]["widths"]["A"] == 20.0
+
+
+def test_autofit_columns_tool_returns_json_envelope(tmp_workbook):
+    wb = load_workbook(tmp_workbook)
+    ws = wb["Sheet1"]
+    ws["A2"] = "Extraordinarily long customer name"
+    wb.save(tmp_workbook)
+    wb.close()
+
+    payload = _load_tool_payload(autofit_columns_tool(tmp_workbook, "Sheet1", ["A"], dry_run=True))
+    assert payload["operation"] == "autofit_columns"
+    assert payload["dry_run"] is True
+    assert payload["data"]["widths"]["A"] > 20
 
 
 def test_set_row_heights_tool_returns_json_envelope(tmp_workbook):

@@ -221,6 +221,27 @@ def test_write_data_dry_run_does_not_persist(tmp_workbook):
     assert table["rows"][0] == ["Alice", 30, "Helsinki"]
 
 
+def test_write_data_defaults_to_summary_without_changes(tmp_workbook):
+    result = write_data(tmp_workbook, "Sheet1", [["Mallory", 44, "Lahti"]], start_cell="A2")
+
+    assert result["dry_run"] is False
+    assert result["changed_cells"] == 3
+    assert "changes" not in result
+
+
+def test_write_data_can_include_changes_explicitly(tmp_workbook):
+    result = write_data(
+        tmp_workbook,
+        "Sheet1",
+        [["Mallory", 44, "Lahti"]],
+        start_cell="A2",
+        include_changes=True,
+    )
+
+    assert result["changed_cells"] == 3
+    assert result["changes"][0]["cell"] == "A2"
+
+
 def test_append_table_rows_appends_using_headers(tmp_workbook):
     result = append_table_rows(
         tmp_workbook,
@@ -233,6 +254,17 @@ def test_append_table_rows_appends_using_headers(tmp_workbook):
 
     table = read_as_table(tmp_workbook, "Sheet1")
     assert table["rows"][-1] == ["Mallory", 44, "Lahti"]
+
+
+def test_append_table_rows_defaults_to_summary_without_changes(tmp_workbook):
+    result = append_table_rows(
+        tmp_workbook,
+        "Sheet1",
+        [{"Name": "Mallory", "Age": 44, "City": "Lahti"}],
+    )
+
+    assert result["changed_cells"] == 3
+    assert "changes" not in result
 
 
 def test_append_table_rows_dry_run_does_not_persist(tmp_workbook):
@@ -266,6 +298,19 @@ def test_update_rows_by_key_updates_matching_rows_and_reports_missing_keys(tmp_w
 
     table = read_as_table(tmp_workbook, "Sheet1")
     assert table["rows"][0] == ["Alice", 31, "Vantaa"]
+
+
+def test_update_rows_by_key_defaults_to_summary_without_changes(tmp_workbook):
+    result = update_rows_by_key(
+        tmp_workbook,
+        "Sheet1",
+        "Name",
+        [{"Name": "Alice", "City": "Vantaa"}],
+    )
+
+    assert result["updated_rows"] == 1
+    assert result["changed_cells"] == 1
+    assert "changes" not in result
 
 
 def test_update_rows_by_key_dry_run_does_not_persist(tmp_workbook):

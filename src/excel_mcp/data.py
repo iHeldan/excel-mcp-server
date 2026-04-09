@@ -76,6 +76,12 @@ def _build_cell_change(
         change["column_name"] = column_name
     return change
 
+
+def _should_include_changes(dry_run: bool, include_changes: Optional[bool]) -> bool:
+    if include_changes is None:
+        return dry_run
+    return include_changes
+
 def read_excel_range(
     filepath: Path | str,
     sheet_name: str,
@@ -154,7 +160,8 @@ def write_data(
     data: Optional[List[List]],
     start_cell: str = "A1",
     dry_run: bool = False,
-) -> Dict[str, str]:
+    include_changes: Optional[bool] = None,
+) -> Dict[str, Any]:
     """Write data to Excel sheet with workbook handling
 
     Headers are handled intelligently based on context.
@@ -218,16 +225,18 @@ def write_data(
                 if not dry_run:
                     _write_data_to_worksheet(ws, data, start_cell)
 
-        return {
+        result = {
             "message": f"{'Previewed' if dry_run else 'Wrote'} data to {sheet_name}",
             "active_sheet": sheet_name,
             "target_range": target_range,
             "sheet_created": sheet_created,
             "cells_written": total_cells,
             "changed_cells": len(changes),
-            "changes": changes,
             "dry_run": dry_run,
         }
+        if _should_include_changes(dry_run, include_changes):
+            result["changes"] = changes
+        return result
     except DataError as e:
         logger.error(str(e))
         raise
@@ -550,6 +559,7 @@ def append_table_rows(
     rows: List[Dict[str, Any]],
     header_row: int = 1,
     dry_run: bool = False,
+    include_changes: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Append dictionary-shaped rows using the worksheet's header row."""
     try:
@@ -609,16 +619,19 @@ def append_table_rows(
                 max(header_map.values()),
             )
 
-        return {
+        result = {
             "message": f"{'Previewed' if dry_run else 'Appended'} {len(rows)} row(s) to {sheet_name}",
             "sheet_name": sheet_name,
             "header_row": header_row,
             "rows_appended": len(rows),
             "start_row": next_row,
             "target_range": target_range,
-            "changes": changes,
+            "changed_cells": len(changes),
             "dry_run": dry_run,
         }
+        if _should_include_changes(dry_run, include_changes):
+            result["changes"] = changes
+        return result
     except DataError:
         raise
     except Exception as e:
@@ -633,6 +646,7 @@ def update_rows_by_key(
     updates: List[Dict[str, Any]],
     header_row: int = 1,
     dry_run: bool = False,
+    include_changes: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Update existing rows by matching a named key column."""
     try:
@@ -722,16 +736,19 @@ def update_rows_by_key(
         if missing_keys:
             message += f"; {len(missing_keys)} key(s) not found"
 
-        return {
+        result = {
             "message": message,
             "sheet_name": sheet_name,
             "key_column": key_column,
             "header_row": header_row,
             "updated_rows": updated_rows,
             "missing_keys": missing_keys,
-            "changes": changes,
+            "changed_cells": len(changes),
             "dry_run": dry_run,
         }
+        if _should_include_changes(dry_run, include_changes):
+            result["changes"] = changes
+        return result
     except DataError:
         raise
     except Exception as e:

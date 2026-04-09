@@ -1,8 +1,19 @@
+import json
+
 import pytest
 from openpyxl import load_workbook
 
-from excel_mcp.formatting import format_range
+from excel_mcp.formatting import format_range, format_ranges
 from excel_mcp.exceptions import ValidationError, FormattingError
+from excel_mcp.server import format_ranges as format_ranges_tool
+
+
+def _load_tool_payload(raw: str) -> dict:
+    payload = json.loads(raw)
+    assert payload["ok"] is True
+    assert "operation" in payload
+    assert "message" in payload
+    return payload
 
 
 # --- Basic formatting ---
@@ -118,12 +129,24 @@ def test_merge_cells(tmp_workbook):
 # --- Dry run ---
 
 def test_dry_run_does_not_persist(tmp_workbook):
-    format_range(tmp_workbook, "Sheet1", "A1", bold=True, dry_run=True)
+    result = format_range(tmp_workbook, "Sheet1", "A1", bold=True, dry_run=True)
+    assert result["changes"][0]["range"] == "A1"
 
     wb = load_workbook(tmp_workbook)
     # dry_run should NOT save changes
     assert wb["Sheet1"]["A1"].font.bold is not True
     wb.close()
+
+
+def test_format_range_defaults_to_summary_without_changes(tmp_workbook):
+    result = format_range(tmp_workbook, "Sheet1", "A1", bold=True)
+    assert result["dry_run"] is False
+    assert "changes" not in result
+
+
+def test_format_range_can_include_changes_explicitly(tmp_workbook):
+    result = format_range(tmp_workbook, "Sheet1", "A1", bold=True, include_changes=True)
+    assert result["changes"][0]["range"] == "A1"
 
 
 # --- Conditional formatting ---
@@ -150,6 +173,58 @@ def test_conditional_format_missing_type(tmp_workbook):
         )
 
 
+def test_format_ranges_applies_multiple_ranges(tmp_workbook):
+    result = format_ranges(
+        tmp_workbook,
+        "Sheet1",
+        [
+            {"start_cell": "A1", "bold": True},
+            {"start_cell": "B2", "end_cell": "C2", "bg_color": "00FF00"},
+        ],
+    )
+    assert result["ranges_formatted"] == 2
+    assert result["ranges"] == ["A1", "B2:C2"]
+    assert "changes" not in result
+
+    wb = load_workbook(tmp_workbook)
+    ws = wb["Sheet1"]
+    assert ws["A1"].font.bold is True
+    assert ws["B2"].fill.start_color.rgb == "FF00FF00"
+    assert ws["C2"].fill.start_color.rgb == "FF00FF00"
+    wb.close()
+
+
+def test_format_ranges_dry_run_does_not_persist(tmp_workbook):
+    result = format_ranges(
+        tmp_workbook,
+        "Sheet1",
+        [{"start_cell": "A1", "bold": True}, {"start_cell": "B2", "font_size": 18}],
+        dry_run=True,
+    )
+    assert result["dry_run"] is True
+    assert len(result["changes"]) == 2
+
+    wb = load_workbook(tmp_workbook)
+    ws = wb["Sheet1"]
+    assert ws["A1"].font.bold is not True
+    assert ws["B2"].font.size != 18
+    wb.close()
+
+
+def test_format_ranges_tool_returns_json_envelope(tmp_workbook):
+    payload = _load_tool_payload(
+        format_ranges_tool(
+            tmp_workbook,
+            "Sheet1",
+            [{"start_cell": "A1", "bold": True}, {"start_cell": "B2", "font_size": 18}],
+            dry_run=True,
+        )
+    )
+    assert payload["operation"] == "format_ranges"
+    assert payload["dry_run"] is True
+    assert payload["data"]["ranges_formatted"] == 2
+
+
 # --- Error cases ---
 
 def test_format_invalid_sheet(tmp_workbook):
@@ -160,3 +235,8 @@ def test_format_invalid_sheet(tmp_workbook):
 def test_format_invalid_start_cell(tmp_workbook):
     with pytest.raises(ValidationError, match="Invalid start cell"):
         format_range(tmp_workbook, "Sheet1", "123", bold=True)
+
+
+def test_format_ranges_rejects_non_object_operations(tmp_workbook):
+    with pytest.raises(FormattingError, match="must be an object"):
+        format_ranges(tmp_workbook, "Sheet1", ["A1"])

@@ -47,6 +47,8 @@ Dry-run responses may also include `dry_run` and `changes`:
 }
 ```
 
+Committed write operations default to compact summaries. Pass `include_changes=True` on supported tools when you want detailed per-cell or per-range diffs.
+
 ### `list_all_sheets`
 
 Returns workbook inventory under `data.sheets`:
@@ -165,8 +167,8 @@ Returns matches under `data.matches`:
 
 ## Read, Search, And Write Tools
 
-- `write_data_to_excel(filepath: str, sheet_name: str, data: List[List], start_cell: str = "A1", dry_run: bool = False) -> str`
-  Writes tabular data starting at the given cell. Missing target sheets are created automatically. Returns `changes` and supports preview mode.
+- `write_data_to_excel(filepath: str, sheet_name: str, data: List[List], start_cell: str = "A1", dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
+  Writes tabular data starting at the given cell. Missing target sheets are created automatically. Returns compact summaries by default on committed writes, and detailed `changes` during previews unless explicitly disabled.
 - `read_data_from_excel(filepath: str, sheet_name: str, start_cell: str = "A1", end_cell: Optional[str] = None, preview_only: bool = False, compact: bool = False) -> str`
   Returns cell range data with row, column, address, value, and validation metadata under the shared envelope.
 - `read_excel_as_table(filepath: str, sheet_name: str, header_row: int = 1, max_rows: Optional[int] = None, compact: bool = False) -> str`
@@ -175,10 +177,10 @@ Returns matches under `data.matches`:
   Returns a compact table from the requested sheet, or auto-selects the first workbook sheet when `sheet_name` is omitted.
 - `search_in_sheet(filepath: str, sheet_name: str, query: Any, exact: bool = True, max_results: int = 50) -> str`
   Returns exact or partial value matches across the worksheet.
-- `append_table_rows(filepath: str, sheet_name: str, rows: List[Dict[str, Any]], header_row: int = 1, dry_run: bool = False) -> str`
-  Appends header-aware rows using dictionary keys that match worksheet headers.
-- `update_rows_by_key(filepath: str, sheet_name: str, key_column: str, updates: List[Dict[str, Any]], header_row: int = 1, dry_run: bool = False) -> str`
-  Updates existing rows by matching a named key column, and reports unmatched keys.
+- `append_table_rows(filepath: str, sheet_name: str, rows: List[Dict[str, Any]], header_row: int = 1, dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
+  Appends header-aware rows using dictionary keys that match worksheet headers. Returns `changed_cells` always, and detailed `changes` only when requested or during previews.
+- `update_rows_by_key(filepath: str, sheet_name: str, key_column: str, updates: List[Dict[str, Any]], header_row: int = 1, dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
+  Updates existing rows by matching a named key column, reports unmatched keys, and returns compact summaries by default.
 
 ## Formula And Validation Tools
 
@@ -193,14 +195,18 @@ Returns matches under `data.matches`:
 
 ## Formatting And Layout Tools
 
-- `format_range(filepath: str, sheet_name: str, start_cell: str, end_cell: Optional[str] = None, bold: bool = False, italic: bool = False, underline: bool = False, font_size: Optional[int] = None, font_color: Optional[str] = None, bg_color: Optional[str] = None, border_style: Optional[str] = None, border_color: Optional[str] = None, number_format: Optional[str] = None, alignment: Optional[str] = None, wrap_text: bool = False, merge_cells: bool = False, protection: Optional[Dict[str, Any]] = None, conditional_format: Optional[Dict[str, Any]] = None, dry_run: bool = False) -> str`
-  Applies formatting options to a cell or range and supports preview mode.
+- `format_range(filepath: str, sheet_name: str, start_cell: str, end_cell: Optional[str] = None, bold: bool = False, italic: bool = False, underline: bool = False, font_size: Optional[int] = None, font_color: Optional[str] = None, bg_color: Optional[str] = None, border_style: Optional[str] = None, border_color: Optional[str] = None, number_format: Optional[str] = None, alignment: Optional[str] = None, wrap_text: bool = False, merge_cells: bool = False, protection: Optional[Dict[str, Any]] = None, conditional_format: Optional[Dict[str, Any]] = None, dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
+  Applies formatting options to a cell or range and supports preview mode. Returns compact summaries by default on committed writes.
+- `format_ranges(filepath: str, sheet_name: str, ranges: List[Dict[str, Any]], dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
+  Applies formatting to multiple ranges in one workbook pass. Each range object uses the same option keys as `format_range`, such as `start_cell`, `end_cell`, `bold`, `font_size`, `bg_color`, or `conditional_format`.
 - `freeze_panes(filepath: str, sheet_name: str, cell: Optional[str] = None, dry_run: bool = False) -> str`
   Sets freeze panes at the given cell or clears them when `cell` is omitted or `A1`. Supports preview mode.
 - `set_autofilter(filepath: str, sheet_name: str, range_ref: Optional[str] = None, dry_run: bool = False) -> str`
   Applies an autofilter to the given range or infers the used range automatically. Supports preview mode.
 - `set_column_widths(filepath: str, sheet_name: str, widths: Dict[str, float], dry_run: bool = False) -> str`
   Sets explicit widths for one or more worksheet columns using a map keyed by column letter. Supports preview mode.
+- `autofit_columns(filepath: str, sheet_name: str, columns: Optional[List[str]] = None, min_width: float = 8.43, max_width: Optional[float] = None, padding: float = 2.0, dry_run: bool = False) -> str`
+  Auto-fits worksheet columns from the current content width. When `columns` is omitted, the tool scans the used worksheet range.
 - `set_row_heights(filepath: str, sheet_name: str, heights: Dict[str, float], dry_run: bool = False) -> str`
   Sets explicit heights for one or more worksheet rows using a map keyed by row number. Supports preview mode.
 - `merge_cells(filepath: str, sheet_name: str, start_cell: str, end_cell: str, dry_run: bool = False) -> str`
@@ -250,6 +256,8 @@ Returns matches under `data.matches`:
 - Use `read_excel_as_table` when the source data is tabular and headers matter.
 - Use `read_data_from_excel` when you need cell addresses or validation metadata.
 - Use `compact=True` on read tools when you want to minimize response size for agent workflows.
+- Use `format_ranges` instead of repeated `format_range` calls when you're styling a report or dashboard in several places at once.
+- Use `autofit_columns` after writing or formatting tables when you want readable output without hand-tuning widths.
 - Use `search_in_sheet` to find a value before mutating a workbook.
 - Prefer `streamable-http` for long-running remote integrations.
 - Prefer `stdio` for local desktop MCP clients.
