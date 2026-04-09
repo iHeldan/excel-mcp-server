@@ -402,6 +402,7 @@ def create_chart_in_sheet(
             try:
                 if chart_type_lower == "scatter":
                     for col in range(start_col + 1, end_col + 1):
+                        series_title = source_worksheet.cell(row=start_row, column=col).value
                         x_values = Reference(
                             source_worksheet,
                             min_row=start_row + 1,
@@ -414,7 +415,7 @@ def create_chart_in_sheet(
                             max_row=end_row,
                             min_col=col,
                         )
-                        series = Series(y_values, x_values, title_from_data=True)
+                        series = Series(y_values, x_values, title=series_title)
                         chart.series.append(series)
                 else:
                     data = Reference(

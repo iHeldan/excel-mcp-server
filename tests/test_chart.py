@@ -74,6 +74,12 @@ def test_create_scatter_chart(chart_workbook):
     )
     assert result["details"]["type"] == "scatter"
 
+    charts = list_charts(chart_workbook, sheet_name="Sales")
+    created_chart = next(chart for chart in charts if chart["anchor"] == "E1")
+    assert created_chart["series"][0]["title"] == "Cost"
+    assert created_chart["series"][0]["x_values"].endswith("$B$2:$B$5")
+    assert created_chart["series"][0]["y_values"].endswith("$C$2:$C$5")
+
 
 def test_chart_with_style_options(chart_workbook):
     style = {

@@ -13,6 +13,63 @@ from .workbook import safe_workbook
 
 logger = logging.getLogger(__name__)
 
+
+def _clean_field_name(field: str) -> str:
+    field = str(field).strip()
+    for suffix in [" (sum)", " (average)", " (count)", " (min)", " (max)"]:
+        if field.lower().endswith(suffix):
+            return field[:-len(suffix)]
+    return field
+
+
+def _field_lookup_key(field: str) -> str:
+    return _clean_field_name(field).lower()
+
+
+def _resolve_field_names(requested_fields: list[str], available_fields: list[str], field_type: str) -> list[str]:
+    available_lookup: dict[str, str] = {}
+    for field in available_fields:
+        lookup_key = _field_lookup_key(field)
+        if lookup_key in available_lookup and available_lookup[lookup_key] != field:
+            raise ValidationError(
+                f"Ambiguous {field_type} field '{field}'. Available fields conflict after normalization."
+            )
+        available_lookup[lookup_key] = field
+
+    resolved_fields: list[str] = []
+    for field in requested_fields:
+        lookup_key = _field_lookup_key(str(field))
+        resolved_field = available_lookup.get(lookup_key)
+        if resolved_field is None:
+            raise ValidationError(
+                f"Invalid {field_type} field '{field}'. "
+                f"Available fields: {', '.join(sorted(available_fields))}"
+            )
+        resolved_fields.append(resolved_field)
+
+    return resolved_fields
+
+
+def _format_column_header(
+    column_filters: dict[str, Any],
+    value_field: str,
+    agg_func: str,
+    *,
+    include_value_field: bool,
+) -> str:
+    value_label = f"{value_field} ({agg_func})"
+    if not column_filters:
+        return value_label
+
+    if len(column_filters) == 1:
+        column_label = str(next(iter(column_filters.values())))
+    else:
+        column_label = " | ".join(f"{field}={value}" for field, value in column_filters.items())
+
+    if include_value_field:
+        return f"{column_label} | {value_label}"
+    return column_label
+
 def create_pivot_table(
     filepath: str,
     sheet_name: str,
@@ -54,14 +111,6 @@ def create_pivot_table(
         # Create range string
         data_range_str = f"{get_column_letter(start_col)}{start_row}:{get_column_letter(end_col)}{end_row}"
 
-        # Clean up field names by removing aggregation suffixes
-        def clean_field_name(field: str) -> str:
-            field = str(field).strip()
-            for suffix in [" (sum)", " (average)", " (count)", " (min)", " (max)"]:
-                if field.lower().endswith(suffix):
-                    return field[:-len(suffix)]
-            return field
-
         # Read source data and convert to list of dicts
         try:
             data_as_list = read_excel_range(filepath, sheet_name, start_cell, end_cell)
@@ -86,28 +135,14 @@ def create_pivot_table(
 
         # Validate field names exist in data
         if data:
-            available_fields_raw = data[0].keys()
-            available_fields = {clean_field_name(str(header)).lower() for header in available_fields_raw}
-
-            for field_list, field_type in [(rows, "row"), (values, "value")]:
-                for field in field_list:
-                    if clean_field_name(str(field)).lower() not in available_fields:
-                        raise ValidationError(
-                            f"Invalid {field_type} field '{field}'. "
-                            f"Available fields: {', '.join(sorted(available_fields_raw))}"
-                        )
-
-            if columns:
-                for field in columns:
-                    if clean_field_name(str(field)).lower() not in available_fields:
-                        raise ValidationError(
-                            f"Invalid column field '{field}'. "
-                            f"Available fields: {', '.join(sorted(available_fields_raw))}"
-                        )
-
-        # Clean up row and value field names
-        cleaned_rows = [clean_field_name(field) for field in rows]
-        cleaned_values = [clean_field_name(field) for field in values]
+            available_fields_raw = list(data[0].keys())
+            resolved_rows = _resolve_field_names(rows, available_fields_raw, "row")
+            resolved_values = _resolve_field_names(values, available_fields_raw, "value")
+            resolved_columns = _resolve_field_names(columns or [], available_fields_raw, "column")
+        else:
+            resolved_rows = rows
+            resolved_values = values
+            resolved_columns = columns or []
 
         with safe_workbook(filepath, save=True) as wb:
             if sheet_name not in wb.sheetnames:
@@ -124,53 +159,72 @@ def create_pivot_table(
             current_col = 1
 
             # Write row field headers
-            for field in cleaned_rows:
+            for field in resolved_rows:
                 cell = pivot_ws.cell(row=current_row, column=current_col, value=field)
                 cell.font = Font(bold=True)
                 current_col += 1
 
-            # Write value field headers
-            for field in cleaned_values:
-                cell = pivot_ws.cell(row=current_row, column=current_col, value=f"{field} ({agg_func})")
-                cell.font = Font(bold=True)
-                current_col += 1
+            # Resolve row and column combinations before writing value headers
+            row_field_values = {field: {record.get(field) for record in data} for field in resolved_rows}
+            row_combinations = _get_combinations(row_field_values)
+
+            column_field_values = {field: {record.get(field) for record in data} for field in resolved_columns}
+            column_combinations = _get_combinations(column_field_values)
+
+            if not column_combinations:
+                column_combinations = [{}]
+
+            include_value_field = len(resolved_values) > 1 or len(resolved_columns) > 1
+
+            # Write value/column headers
+            for column_filters in column_combinations:
+                for field in resolved_values:
+                    header = _format_column_header(
+                        column_filters,
+                        field,
+                        agg_func,
+                        include_value_field=include_value_field,
+                    )
+                    cell = pivot_ws.cell(row=current_row, column=current_col, value=header)
+                    cell.font = Font(bold=True)
+                    current_col += 1
+
+            if not resolved_values:
+                raise ValidationError("At least one value field is required")
+
+            # Recalculate after header writing
+            current_row = 2
 
             # Get unique values for each row field
-            field_values = {}
-            for field in cleaned_rows:
-                all_values = []
-                for record in data:
-                    value = str(record.get(field, ''))
-                    all_values.append(value)
-                field_values[field] = sorted(set(all_values))
+            field_values = row_field_values
 
             # Generate all combinations of row field values
             row_combinations = _get_combinations(field_values)
 
             # Calculate table dimensions for formatting
             total_rows = len(row_combinations) + 1  # +1 for header
-            total_cols = len(cleaned_rows) + len(cleaned_values)
+            total_cols = len(resolved_rows) + (len(column_combinations) * len(resolved_values))
 
             # Write data rows
-            current_row = 2
             for combo in row_combinations:
                 # Write row field values
                 col = 1
-                for field in cleaned_rows:
+                for field in resolved_rows:
                     pivot_ws.cell(row=current_row, column=col, value=combo[field])
                     col += 1
 
-                # Filter data for current combination
-                filtered_data = _filter_data(data, combo, {})
-
-                # Calculate and write aggregated values
-                for value_field in cleaned_values:
-                    try:
-                        value = _aggregate_values(filtered_data, value_field, agg_func)
-                        pivot_ws.cell(row=current_row, column=col, value=value)
-                    except Exception as e:
-                        raise PivotError(f"Failed to aggregate values for field '{value_field}': {str(e)}")
-                    col += 1
+                # Calculate and write aggregated values for each column combination
+                for column_filters in column_combinations:
+                    filtered_data = _filter_data(data, combo, column_filters)
+                    for value_field in resolved_values:
+                        try:
+                            value = _aggregate_values(filtered_data, value_field, agg_func)
+                            pivot_ws.cell(row=current_row, column=col, value=value)
+                        except Exception as e:
+                            raise PivotError(
+                                f"Failed to aggregate values for field '{value_field}': {str(e)}"
+                            )
+                        col += 1
 
                 current_row += 1
 
@@ -198,9 +252,9 @@ def create_pivot_table(
             "details": {
                 "source_range": data_range_str,
                 "pivot_sheet": pivot_sheet_name,
-                "rows": cleaned_rows,
-                "columns": columns or [],
-                "values": cleaned_values,
+                "rows": resolved_rows,
+                "columns": resolved_columns,
+                "values": resolved_values,
                 "aggregation": agg_func
             }
         }
@@ -219,7 +273,7 @@ def _get_combinations(field_values: dict[str, set]) -> list[dict]:
     for field, values in list(field_values.items()):  # Convert to list to avoid runtime changes
         new_result = []
         for combo in result:
-            for value in sorted(values):  # Sort for consistent ordering
+            for value in sorted(values, key=lambda item: (item is None, str(item))):
                 new_combo = combo.copy()
                 new_combo[field] = value
                 new_result.append(new_combo)

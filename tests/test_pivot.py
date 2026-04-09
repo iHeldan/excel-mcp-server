@@ -110,6 +110,45 @@ def test_pivot_replaces_existing_pivot_sheet(pivot_workbook):
     assert result["details"]["aggregation"] == "max"
 
 
+def test_pivot_resolves_case_insensitive_field_names(pivot_workbook):
+    result = create_pivot_table(
+        pivot_workbook, "Data", "A1:D6", rows=["region"], values=["sales"]
+    )
+
+    assert result["details"]["rows"] == ["Region"]
+    assert result["details"]["values"] == ["Sales"]
+
+    wb = load_workbook(pivot_workbook)
+    pivot_ws = wb["Data_pivot"]
+    vals = {pivot_ws[f"A{r}"].value: pivot_ws[f"B{r}"].value for r in range(2, 4)}
+    assert vals["North"] == 420
+    assert vals["South"] == 450
+    wb.close()
+
+
+def test_pivot_columns_create_grouped_value_columns(pivot_workbook):
+    result = create_pivot_table(
+        pivot_workbook,
+        "Data",
+        "A1:D6",
+        rows=["Region"],
+        values=["Sales"],
+        columns=["Product"],
+    )
+
+    assert result["details"]["columns"] == ["Product"]
+
+    wb = load_workbook(pivot_workbook)
+    pivot_ws = wb["Data_pivot"]
+    headers = [pivot_ws["A1"].value, pivot_ws["B1"].value, pivot_ws["C1"].value]
+    assert headers == ["Region", "Gadget", "Widget"]
+    north = [pivot_ws["A2"].value, pivot_ws["B2"].value, pivot_ws["C2"].value]
+    south = [pivot_ws["A3"].value, pivot_ws["B3"].value, pivot_ws["C3"].value]
+    assert north == ["North", 200, 220]
+    assert south == ["South", 300, 150]
+    wb.close()
+
+
 # --- Error cases ---
 
 def test_pivot_invalid_agg_func(pivot_workbook):
