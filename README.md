@@ -121,6 +121,7 @@ For the compact table readers (`quick_read`, `read_excel_as_table`, `read_excel_
 
 - `row_mode="arrays"` keeps the smallest `headers + rows` shape
 - `row_mode="objects"` returns `records` keyed by normalized field names such as `first_name`
+- normalized field names are ASCII-safe transliterations, so headers like `Näyttökerrat` become `nayttokerrat`
 - `infer_schema=True` adds lightweight `schema` hints inferred from the returned rows
 
 See [TOOLS.md](TOOLS.md) for the full reference.

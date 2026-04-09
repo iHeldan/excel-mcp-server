@@ -117,6 +117,36 @@ def test_read_as_table_schema_normalizes_and_dedupes_headers(tmp_path):
         "first_name_2": "Admin",
     }
 
+
+def test_read_as_table_schema_transliterates_accented_headers(tmp_path):
+    from openpyxl import Workbook
+
+    filepath = tmp_path / "schema-fi.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["A1"] = "Näyttökerrat"
+    ws["B1"] = "Lisäklikit"
+    ws["C1"] = "CTR %"
+    ws["A2"] = 1200
+    ws["B2"] = 45
+    ws["C2"] = 3.75
+    wb.save(filepath)
+    wb.close()
+
+    result = read_as_table(str(filepath), "Sheet1", row_mode="objects", infer_schema=True)
+
+    assert result["schema"] == [
+        {"field": "nayttokerrat", "header": "Näyttökerrat", "type": "integer", "nullable": False},
+        {"field": "lisaklikit", "header": "Lisäklikit", "type": "integer", "nullable": False},
+        {"field": "ctr", "header": "CTR %", "type": "number", "nullable": False},
+    ]
+    assert result["records"][0] == {
+        "nayttokerrat": 1200,
+        "lisaklikit": 45,
+        "ctr": 3.75,
+    }
+
 def test_search_cells_finds_exact_match(tmp_workbook):
     results = search_cells(tmp_workbook, "Sheet1", "Alice")
     assert len(results) == 1

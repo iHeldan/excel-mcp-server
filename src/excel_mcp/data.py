@@ -3,6 +3,7 @@ from decimal import Decimal
 from pathlib import Path
 import logging
 import re
+import unicodedata
 from typing import Any, Dict, List, Optional
 
 from openpyxl.worksheet.worksheet import Worksheet
@@ -46,7 +47,10 @@ def _field_name_from_header(header: Any, index: int) -> str:
     if not raw_header:
         return f"column_{index}"
 
-    normalized = re.sub(r"[^0-9A-Za-z]+", "_", raw_header).strip("_").lower()
+    ascii_header = (
+        unicodedata.normalize("NFKD", raw_header).encode("ascii", "ignore").decode("ascii")
+    )
+    normalized = re.sub(r"[^0-9A-Za-z]+", "_", ascii_header).strip("_").lower()
     if not normalized:
         return f"column_{index}"
     if normalized[0].isdigit():

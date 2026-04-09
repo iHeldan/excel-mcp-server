@@ -178,7 +178,7 @@ Returns matches under `data.matches`:
 - `quick_read(filepath: str, sheet_name: Optional[str] = None, header_row: int = 1, max_rows: Optional[int] = None, row_mode: str = "arrays", infer_schema: bool = False) -> str`
   Returns a compact table from the requested sheet, or auto-selects the first workbook sheet when `sheet_name` is omitted.
 - `row_mode`
-  Use `row_mode="arrays"` for the current `headers + rows` shape, or `row_mode="objects"` to receive `records` keyed by normalized field names such as `first_name` or `column_2`.
+  Use `row_mode="arrays"` for the current `headers + rows` shape, or `row_mode="objects"` to receive `records` keyed by normalized field names such as `first_name`, `column_2`, or ASCII-safe transliterations like `nayttokerrat`.
 - `infer_schema`
   When `infer_schema=True`, the response includes `schema` entries with `field`, `header`, `type`, and `nullable` hints inferred from the returned rows.
 - `search_in_sheet(filepath: str, sheet_name: str, query: Any, exact: bool = True, max_results: int = 50) -> str`
