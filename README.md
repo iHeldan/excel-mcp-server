@@ -4,6 +4,7 @@ SheetForge MCP exposes `.xlsx` workbook operations over the Model Context Protoc
 
 Package name: `sheetforge-mcp`
 CLI command: `sheetforge-mcp`
+Current release: `0.4.0`
 
 ## What This Project Covers
 
@@ -131,6 +132,7 @@ For the compact table readers (`quick_read`, `read_excel_as_table`, `read_excel_
 - `infer_schema=True` adds lightweight `schema` hints inferred from the returned rows
 
 See [TOOLS.md](TOOLS.md) for the full reference.
+Release notes live in [CHANGELOG.md](CHANGELOG.md).
 
 ## Response Format
 
@@ -187,8 +189,15 @@ Run the package locally:
 uv run sheetforge-mcp stdio
 ```
 
+Build distributions locally:
+
+```bash
+uv build
+```
+
 ## Release Flow
 
+- Update `pyproject.toml`, `manifest.json`, and the tracked `.mcpb` bundle together for each release.
 - GitHub releases run a build verification workflow only.
 - PyPI publishing is a separate manual workflow, so releases do not create a failing deployment before Trusted Publisher is configured for the package.
 
