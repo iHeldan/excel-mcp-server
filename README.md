@@ -196,8 +196,8 @@ uv run sheetforge-mcp stdio
 - `read_data_from_excel(..., preview_only=True)` limits the response to the first 10 rows in the selected range and marks the payload as truncated when applicable.
 - `read_data_from_excel(..., compact=True)` omits default validation stubs for cells that do not have validation rules.
 - `read_excel_as_table(..., compact=True)` returns only `headers` and `rows` unless truncation metadata is needed.
-- `write_data_to_excel`, `append_table_rows`, `update_rows_by_key`, and `format_range` now default to compact responses on committed writes. Use `include_changes=True` for detailed diffs.
-- `format_ranges` batches multiple formatting operations into one workbook pass, which is much more efficient for report polish than repeated single-range calls.
+- Core mutation tools now default to compact responses on committed writes, including data writes, formatting, worksheet layout helpers, and merge/unmerge helpers. Use `include_changes=True` for detailed diffs.
+- `format_ranges` batches multiple formatting operations into one workbook pass, and now reports per-range `errors` without discarding successful ranges in the same batch.
 - `autofit_columns` estimates practical column widths from the current cell contents, with optional column filters and min/max bounds.
 - `get_worksheet_protection` and `set_worksheet_protection` add a safe worksheet-level wrapper around Excel protection flags.
 - `set_print_area` and `set_print_titles` make report/export setup scriptable without dropping into raw openpyxl workbook internals.

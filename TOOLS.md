@@ -200,7 +200,13 @@ Returns matches under `data.matches`:
 - `format_range(filepath: str, sheet_name: str, start_cell: str, end_cell: Optional[str] = None, bold: bool = False, italic: bool = False, underline: bool = False, font_size: Optional[int] = None, font_color: Optional[str] = None, bg_color: Optional[str] = None, border_style: Optional[str] = None, border_color: Optional[str] = None, number_format: Optional[str] = None, alignment: Optional[str] = None, wrap_text: bool = False, merge_cells: bool = False, protection: Optional[Dict[str, Any]] = None, conditional_format: Optional[Dict[str, Any]] = None, dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
   Applies formatting options to a cell or range and supports preview mode. Returns compact summaries by default on committed writes.
 - `format_ranges(filepath: str, sheet_name: str, ranges: List[Dict[str, Any]], dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
-  Applies formatting to multiple ranges in one workbook pass. Each range object uses the same option keys as `format_range`, such as `start_cell`, `end_cell`, `bold`, `font_size`, `bg_color`, or `conditional_format`.
+  Applies formatting to multiple ranges in one workbook pass. Each range object uses the same option keys as `format_range`, such as `start_cell`, `end_cell`, `bold`, `font_size`, `bg_color`, or `conditional_format`. Invalid operations are reported under `errors` while successful ranges still apply.
+- `conditional_format` rule parameters
+  You can pass rule parameters either under `conditional_format.params` or directly as top-level keys alongside `type`. Nested `params` win if both are present.
+- `conditional_format` example
+  `{"type": "data_bar", "params": {"start_type": "min", "end_type": "max", "color": "2E86C1"}}`
+- `conditional_format` shorthand example
+  `{"type": "data_bar", "start_type": "min", "end_type": "max", "color": "2E86C1"}`
 - `freeze_panes(filepath: str, sheet_name: str, cell: Optional[str] = None, dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
   Sets freeze panes at the given cell or clears them when `cell` is omitted or `A1`. Supports preview mode, and committed writes stay compact unless `include_changes=True`.
 - `set_autofilter(filepath: str, sheet_name: str, range_ref: Optional[str] = None, dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
@@ -215,10 +221,10 @@ Returns matches under `data.matches`:
   Auto-fits worksheet columns from the current content width. When `columns` is omitted, the tool scans the used worksheet range.
 - `set_row_heights(filepath: str, sheet_name: str, heights: Dict[str, float], dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
   Sets explicit heights for one or more worksheet rows using a map keyed by row number. Supports preview mode, and committed writes stay compact unless `include_changes=True`.
-- `merge_cells(filepath: str, sheet_name: str, start_cell: str, end_cell: str, dry_run: bool = False) -> str`
-  Merges the selected range and supports preview mode.
-- `unmerge_cells(filepath: str, sheet_name: str, start_cell: str, end_cell: str, dry_run: bool = False) -> str`
-  Unmerges the selected range and supports preview mode.
+- `merge_cells(filepath: str, sheet_name: str, start_cell: str, end_cell: str, dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
+  Merges the selected range and supports preview mode. Committed writes stay compact unless `include_changes=True`.
+- `unmerge_cells(filepath: str, sheet_name: str, start_cell: str, end_cell: str, dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
+  Unmerges the selected range and supports preview mode. Committed writes stay compact unless `include_changes=True`.
 - `get_merged_cells(filepath: str, sheet_name: str) -> str`
   Returns the worksheet's merged ranges under the shared JSON envelope.
 

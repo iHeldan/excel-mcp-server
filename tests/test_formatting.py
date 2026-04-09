@@ -166,6 +166,24 @@ def test_conditional_format_cell_is(tmp_workbook):
     assert "Applied" in result["message"]
 
 
+def test_conditional_format_data_bar_accepts_top_level_params(tmp_workbook):
+    cond = {
+        "type": "data_bar",
+        "start_type": "min",
+        "end_type": "max",
+        "color": "2E86C1",
+    }
+    result = format_range(
+        tmp_workbook, "Sheet1", "B2", end_cell="B6", conditional_format=cond
+    )
+    assert "Applied" in result["message"]
+
+    wb = load_workbook(tmp_workbook)
+    ws = wb["Sheet1"]
+    assert len(ws.conditional_formatting) == 1
+    wb.close()
+
+
 def test_conditional_format_missing_type(tmp_workbook):
     with pytest.raises(FormattingError, match="type not specified"):
         format_range(
@@ -211,6 +229,37 @@ def test_format_ranges_dry_run_does_not_persist(tmp_workbook):
     wb.close()
 
 
+def test_format_ranges_allows_partial_success(tmp_workbook):
+    result = format_ranges(
+        tmp_workbook,
+        "Sheet1",
+        [
+            {"start_cell": "A1", "bold": True},
+            {
+                "start_cell": "B2",
+                "end_cell": "B6",
+                "conditional_format": {
+                    "type": "data_bar",
+                    "start_type": "bogus",
+                    "end_type": "max",
+                    "color": "2E86C1",
+                },
+            },
+        ],
+    )
+    assert result["ranges_formatted"] == 1
+    assert result["ranges_failed"] == 1
+    assert result["ranges"] == ["A1"]
+    assert result["errors"][0]["range"] == "B2:B6"
+    assert "changes" not in result
+
+    wb = load_workbook(tmp_workbook)
+    ws = wb["Sheet1"]
+    assert ws["A1"].font.bold is True
+    assert len(ws.conditional_formatting) == 0
+    wb.close()
+
+
 def test_format_ranges_tool_returns_json_envelope(tmp_workbook):
     payload = _load_tool_payload(
         format_ranges_tool(
@@ -223,6 +272,32 @@ def test_format_ranges_tool_returns_json_envelope(tmp_workbook):
     assert payload["operation"] == "format_ranges"
     assert payload["dry_run"] is True
     assert payload["data"]["ranges_formatted"] == 2
+
+
+def test_format_ranges_tool_surfaces_partial_success_metadata(tmp_workbook):
+    payload = _load_tool_payload(
+        format_ranges_tool(
+            tmp_workbook,
+            "Sheet1",
+            [
+                {"start_cell": "A1", "bold": True},
+                {
+                    "start_cell": "B2",
+                    "end_cell": "B6",
+                    "conditional_format": {
+                        "type": "data_bar",
+                        "start_type": "bogus",
+                        "end_type": "max",
+                        "color": "2E86C1",
+                    },
+                },
+            ],
+        )
+    )
+    assert payload["operation"] == "format_ranges"
+    assert payload["data"]["ranges_formatted"] == 1
+    assert payload["data"]["ranges_failed"] == 1
+    assert payload["warnings"][0] == "1 range(s) failed during batch formatting"
 
 
 # --- Error cases ---

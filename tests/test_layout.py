@@ -6,6 +6,7 @@ from openpyxl.workbook.defined_name import DefinedName
 
 from excel_mcp.server import freeze_panes as freeze_panes_tool
 from excel_mcp.server import list_named_ranges as list_named_ranges_tool
+from excel_mcp.server import merge_cells as merge_cells_tool
 from excel_mcp.server import autofit_columns as autofit_columns_tool
 from excel_mcp.server import get_worksheet_protection as get_worksheet_protection_tool
 from excel_mcp.server import set_print_area as set_print_area_tool
@@ -15,9 +16,11 @@ from excel_mcp.server import set_row_heights as set_row_heights_tool
 from excel_mcp.server import set_worksheet_protection as set_worksheet_protection_tool
 from excel_mcp.server import set_worksheet_visibility as set_worksheet_visibility_tool
 from excel_mcp.server import set_autofilter as set_autofilter_tool
+from excel_mcp.server import unmerge_cells as unmerge_cells_tool
 from excel_mcp.sheet import (
     autofit_columns,
     get_sheet_protection,
+    merge_range,
     set_auto_filter,
     set_column_widths,
     set_freeze_panes,
@@ -26,6 +29,7 @@ from excel_mcp.sheet import (
     set_row_heights,
     set_sheet_protection,
     set_sheet_visibility,
+    unmerge_range,
 )
 from excel_mcp.workbook import list_named_ranges
 
@@ -72,6 +76,24 @@ def test_set_freeze_panes_dry_run_does_not_persist(tmp_workbook):
     wb = load_workbook(tmp_workbook)
     assert wb["Sheet1"].freeze_panes is None
     wb.close()
+
+
+def test_merge_range_defaults_to_summary_without_changes(tmp_workbook):
+    result = merge_range(tmp_workbook, "Sheet1", "A1", "B1")
+    assert result["range"] == "A1:B1"
+    assert "changes" not in result
+
+    wb = load_workbook(tmp_workbook)
+    assert any("A1:B1" in str(r) for r in wb["Sheet1"].merged_cells.ranges)
+    wb.close()
+
+
+def test_unmerge_range_can_include_changes_explicitly(tmp_workbook):
+    merge_range(tmp_workbook, "Sheet1", "A1", "B1")
+
+    result = unmerge_range(tmp_workbook, "Sheet1", "A1", "B1", include_changes=True)
+
+    assert result["changes"][0]["range"] == "A1:B1"
 
 
 def test_set_autofilter_infers_used_range(tmp_workbook):
@@ -322,6 +344,23 @@ def test_freeze_panes_tool_defaults_to_compact_committed_response(tmp_workbook):
 
     assert payload["operation"] == "freeze_panes"
     assert "changes" not in payload
+
+
+def test_merge_cells_tool_defaults_to_compact_committed_response(tmp_workbook):
+    payload = _load_tool_payload(merge_cells_tool(tmp_workbook, "Sheet1", "A1", "B1"))
+
+    assert payload["operation"] == "merge_cells"
+    assert "changes" not in payload
+
+
+def test_unmerge_cells_tool_can_include_changes_explicitly(tmp_workbook):
+    merge_cells_tool(tmp_workbook, "Sheet1", "A1", "B1")
+    payload = _load_tool_payload(
+        unmerge_cells_tool(tmp_workbook, "Sheet1", "A1", "B1", include_changes=True)
+    )
+
+    assert payload["operation"] == "unmerge_cells"
+    assert payload["changes"][0]["range"] == "A1:B1"
 
 
 def test_set_autofilter_tool_returns_json_envelope(tmp_workbook):

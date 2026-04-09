@@ -796,6 +796,7 @@ def merge_range(
     start_cell: str,
     end_cell: str,
     dry_run: bool = False,
+    include_changes: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Merge a range of cells."""
     try:
@@ -811,17 +812,16 @@ def merge_range(
             range_string = format_range_string(start_row, start_col, end_row, end_col)
             worksheet = wb[sheet_name]
             worksheet.merge_cells(range_string)
-        return {
+        return _attach_changes({
             "message": f"Range '{range_string}' {'would be merged' if dry_run else 'merged'} in sheet '{sheet_name}'",
             "range": range_string,
             "sheet_name": sheet_name,
             "dry_run": dry_run,
-            "changes": [{
+        }, changes=[{
                 "type": "merge_cells",
                 "sheet_name": sheet_name,
                 "range": range_string,
-            }],
-        }
+            }], dry_run=dry_run, include_changes=include_changes)
     except SheetError as e:
         logger.error(str(e))
         raise
@@ -835,6 +835,7 @@ def unmerge_range(
     start_cell: str,
     end_cell: str,
     dry_run: bool = False,
+    include_changes: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Unmerge a range of cells."""
     try:
@@ -859,17 +860,16 @@ def unmerge_range(
                 raise SheetError(f"Range '{range_string}' is not merged")
 
             worksheet.unmerge_cells(range_string)
-        return {
+        return _attach_changes({
             "message": f"Range '{range_string}' {'would be unmerged' if dry_run else 'unmerged successfully'}",
             "range": range_string,
             "sheet_name": sheet_name,
             "dry_run": dry_run,
-            "changes": [{
+        }, changes=[{
                 "type": "unmerge_cells",
                 "sheet_name": sheet_name,
                 "range": range_string,
-            }],
-        }
+            }], dry_run=dry_run, include_changes=include_changes)
     except SheetError as e:
         logger.error(str(e))
         raise

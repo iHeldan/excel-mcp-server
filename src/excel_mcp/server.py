@@ -824,11 +824,19 @@ def merge_cells(
     start_cell: str,
     end_cell: str,
     dry_run: bool = False,
+    include_changes: Optional[bool] = None,
 ) -> str:
     """Merge a range of cells."""
     return _run_tool(
         "merge_cells",
-        lambda: merge_range(get_excel_path(filepath), sheet_name, start_cell, end_cell, dry_run=dry_run),
+        lambda: merge_range(
+            get_excel_path(filepath),
+            sheet_name,
+            start_cell,
+            end_cell,
+            dry_run=dry_run,
+            include_changes=include_changes,
+        ),
     )
 
 @mcp.tool(
@@ -844,11 +852,19 @@ def unmerge_cells(
     start_cell: str,
     end_cell: str,
     dry_run: bool = False,
+    include_changes: Optional[bool] = None,
 ) -> str:
     """Unmerge a range of cells."""
     return _run_tool(
         "unmerge_cells",
-        lambda: unmerge_range(get_excel_path(filepath), sheet_name, start_cell, end_cell, dry_run=dry_run),
+        lambda: unmerge_range(
+            get_excel_path(filepath),
+            sheet_name,
+            start_cell,
+            end_cell,
+            dry_run=dry_run,
+            include_changes=include_changes,
+        ),
     )
 
 @mcp.tool(

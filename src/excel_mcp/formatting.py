@@ -78,7 +78,19 @@ def _apply_conditional_format(
     if not rule_type:
         raise FormattingError("Conditional format type not specified")
 
-    params = dict(conditional_format.get("params", {}))
+    nested_params = conditional_format.get("params", {})
+    if nested_params is None:
+        nested_params = {}
+    if not isinstance(nested_params, dict):
+        raise FormattingError("Conditional format params must be an object")
+
+    top_level_params = {
+        key: value
+        for key, value in conditional_format.items()
+        if key not in {"type", "params"}
+    }
+    params = dict(top_level_params)
+    params.update(nested_params)
 
     if rule_type == "cell_is" and "fill" in params:
         fill_params = params["fill"]
@@ -116,8 +128,14 @@ def _apply_conditional_format(
     except FormattingError:
         raise
     except Exception as e:
+        hint = ""
+        if not params:
+            hint = (
+                " Provide rule parameters under conditional_format.params "
+                "or as top-level keys."
+            )
         raise FormattingError(
-            f"Failed to apply conditional formatting: {str(e)}"
+            f"Failed to apply conditional formatting: {str(e)}{hint}"
         ) from e
 
 
@@ -385,6 +403,7 @@ def format_ranges(
             sheet = wb[sheet_name]
             applied_ranges: List[str] = []
             previews: List[Dict[str, Any]] = []
+            errors: List[Dict[str, Any]] = []
 
             for index, operation in enumerate(ranges, start=1):
                 if not isinstance(operation, dict):
@@ -395,6 +414,9 @@ def format_ranges(
                 operation_data = dict(operation)
                 operation_data.pop("dry_run", None)
                 operation_data.pop("include_changes", None)
+                range_label = operation_data.get("start_cell")
+                if operation_data.get("end_cell"):
+                    range_label = f"{range_label}:{operation_data['end_cell']}"
 
                 try:
                     applied = _apply_format_to_sheet(
@@ -402,24 +424,59 @@ def format_ranges(
                         sheet_name=sheet_name,
                         **operation_data,
                     )
+                except (ValidationError, FormattingError) as e:
+                    errors.append(
+                        {
+                            "index": index,
+                            "range": range_label,
+                            "error": str(e),
+                        }
+                    )
+                    continue
                 except TypeError as e:
-                    raise FormattingError(
-                        f"Invalid format operation at index {index}: {str(e)}"
-                    ) from e
+                    errors.append(
+                        {
+                            "index": index,
+                            "range": range_label,
+                            "error": f"Invalid format operation at index {index}: {str(e)}",
+                        }
+                    )
+                    continue
 
                 applied_ranges.append(applied["range"])
                 previews.append(applied["preview"])
 
-        result = {
-            "message": (
+        ranges_failed = len(errors)
+        if applied_ranges and not errors:
+            message = (
                 f"{'Previewed' if dry_run else 'Applied'} formatting to "
                 f"{len(applied_ranges)} range(s) in sheet '{sheet_name}'"
-            ),
+            )
+        elif applied_ranges:
+            message = (
+                f"{'Previewed' if dry_run else 'Applied'} formatting to "
+                f"{len(applied_ranges)} range(s) in sheet '{sheet_name}'; "
+                f"{ranges_failed} range(s) failed"
+            )
+        else:
+            message = (
+                f"No formatting operations were applied in sheet '{sheet_name}'; "
+                f"{ranges_failed} range(s) failed"
+            )
+
+        result = {
+            "message": message,
             "sheet_name": sheet_name,
             "ranges_formatted": len(applied_ranges),
+            "ranges_failed": ranges_failed,
             "ranges": applied_ranges,
             "dry_run": dry_run,
         }
+        if errors:
+            result["errors"] = errors
+            result["warnings"] = [
+                f"{ranges_failed} range(s) failed during batch formatting"
+            ]
         if _should_include_changes(dry_run, include_changes):
             result["changes"] = previews
         return result
