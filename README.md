@@ -4,7 +4,7 @@ SheetForge MCP exposes `.xlsx` workbook operations over the Model Context Protoc
 
 Package name: `sheetforge-mcp`
 CLI command: `sheetforge-mcp`
-Current release: `0.4.0`
+Current release: `0.4.1`
 
 ## What This Project Covers
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.1 - 2026-04-09
+
+This patch release tightens chart behavior for real workbook authoring and visual verification workflows.
+
+### Fixes
+
+- Fixed empty `x_axis` and `y_axis` inputs so Excel no longer renders visible `None` axis titles.
+- Added top-level `width` and `height` chart parameters in centimeters to `create_chart` and `create_chart_from_series`.
+- Kept `style.width` and `style.height` working as a backward-compatible sizing fallback for older prompts and automations.
+- Extended `list_charts` to report the actual persisted chart `width` and `height` from drawing anchors, not just in-memory defaults.
+- Expanded regression coverage to 177 passing tests.
+
 ## 0.4.0 - 2026-04-09
 
 This release turns SheetForge from an early MCP workbook helper into a production-ready Excel automation tool for agent workflows.
