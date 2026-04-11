@@ -160,7 +160,7 @@ Returns matches under `data.matches`:
 - `get_workbook_metadata(filepath: str, include_ranges: bool = False) -> str`
   Returns workbook metadata under the shared JSON envelope.
 - `profile_workbook(filepath: str) -> str`
-  Returns a workbook inventory with per-sheet summaries for visibility, freeze panes, autofilters, protection, tables, charts, print settings, and lightweight workbook-level counts.
+  Returns a workbook inventory with per-sheet summaries for visibility, freeze panes, autofilters, protection, tables, charts, print settings, and lightweight workbook-level counts. Grid-anchored worksheet charts include anchor, dimensions, and `occupied_range` for layout-aware follow-up steps.
 - `list_named_ranges(filepath: str) -> str`
   Returns workbook defined names, their values, and any sheet/range destinations.
 - `list_all_sheets(filepath: str) -> str`

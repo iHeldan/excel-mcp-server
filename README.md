@@ -120,7 +120,7 @@ For chart authoring, prefer `create_chart` as the primary entry point:
 
 The most agent-friendly read tools are:
 
-- `profile_workbook`: one-call inventory for sheets, tables, charts, named ranges, and key layout/protection state
+- `profile_workbook`: one-call inventory for sheets, tables, charts, named ranges, and key layout/protection state, including chart `occupied_range` for grid-anchored worksheet charts
 - `quick_read`: single-call compact table read that auto-selects the first sheet when needed
 - `read_excel_table`: read a native Excel table by `table_name` without guessing worksheet bounds
 - `list_all_sheets`: quick workbook inventory with sheet sizes, emptiness flags, and `sheet_type` for worksheets versus chart sheets
@@ -231,7 +231,7 @@ uv build
 - `read_data_from_excel(..., compact=True)` omits default validation stubs for cells that do not have validation rules.
 - `read_excel_as_table(..., compact=True)` returns only `headers` and `rows` unless truncation metadata is needed.
 - `quick_read`, `read_excel_as_table`, and `read_excel_table` can now return `records` plus inferred `schema` hints when you opt into `row_mode="objects"` and `infer_schema=True`.
-- `profile_workbook` provides a single-call workbook inventory with sheet-level table, chart, protection, print, and filter metadata for faster agent orientation.
+- `profile_workbook` provides a single-call workbook inventory with sheet-level table, chart, protection, print, and filter metadata for faster agent orientation, and now includes chart `occupied_range` alongside anchors and dimensions for grid-anchored worksheet charts.
 - Core mutation tools now default to compact responses on committed writes, including data writes, formatting, worksheet layout helpers, and merge/unmerge helpers. Use `include_changes=True` for detailed diffs.
 - `format_ranges` batches multiple formatting operations into one workbook pass, and now reports per-range `errors` without discarding successful ranges in the same batch.
 - `autofit_columns` estimates practical column widths from the current cell contents, with optional column filters and min/max bounds.

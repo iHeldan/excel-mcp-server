@@ -147,6 +147,7 @@ def test_profile_workbook_summarizes_tables_and_charts(tmp_workbook):
     assert sheet["tables"][0]["table_name"] == "Customers"
     assert sheet["charts"][0]["chart_type"] == "bar"
     assert sheet["charts"][0]["anchor"] == "E1"
+    assert sheet["charts"][0]["occupied_range"].startswith("E1:")
 
 
 def test_profile_workbook_tool_returns_json_envelope(tmp_workbook):
@@ -191,6 +192,7 @@ def test_profile_workbook_handles_chart_sheets(tmp_path):
     assert chart_sheet["charts"][0]["chart_index"] == 1
     assert chart_sheet["charts"][0]["chart_type"] == "bar"
     assert chart_sheet["charts"][0]["series_count"] == 1
+    assert "occupied_range" not in chart_sheet["charts"][0]
 
 
 def test_get_workbook_info_include_ranges_skips_chart_sheets(tmp_path):

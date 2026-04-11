@@ -266,6 +266,7 @@ def profile_workbook(filepath: str) -> dict[str, Any]:
 
         with safe_workbook(filepath) as wb:
             from .chart import (
+                _chart_occupied_range,
                 _chart_type_name,
                 _extract_chart_anchor,
                 _extract_chart_dimensions,
@@ -284,18 +285,25 @@ def profile_workbook(filepath: str) -> dict[str, Any]:
                 charts = []
                 for chart_index, chart in enumerate(getattr(ws, "_charts", []), start=1):
                     width, height = _extract_chart_dimensions(chart)
+                    anchor = _extract_chart_anchor(chart)
                     series = getattr(chart, "ser", None) or list(getattr(chart, "series", []))
-                    charts.append(
-                        {
-                            "chart_index": chart_index,
-                            "chart_type": _chart_type_name(chart),
-                            "anchor": _extract_chart_anchor(chart),
-                            "title": _extract_title_text(getattr(chart, "title", None)),
-                            "width": width,
-                            "height": height,
-                            "series_count": len(series),
-                        }
-                    )
+                    chart_info = {
+                        "chart_index": chart_index,
+                        "chart_type": _chart_type_name(chart),
+                        "anchor": anchor,
+                        "title": _extract_title_text(getattr(chart, "title", None)),
+                        "width": width,
+                        "height": height,
+                        "series_count": len(series),
+                    }
+                    if anchor and width and height:
+                        chart_info["occupied_range"] = _chart_occupied_range(
+                            ws,
+                            anchor,
+                            width=width,
+                            height=height,
+                        )
+                    charts.append(chart_info)
 
                 if _sheet_type(ws) == "chartsheet":
                     total_charts += len(charts)
