@@ -19,7 +19,7 @@ from openpyxl.utils.units import EMU_to_cm
 
 from .cell_utils import parse_cell_range
 from .exceptions import ValidationError, ChartError
-from .workbook import safe_workbook
+from .workbook import require_worksheet, safe_workbook
 
 logger = logging.getLogger(__name__)
 DEFAULT_CHART_WIDTH = 15.0
@@ -310,9 +310,12 @@ def _resolve_range_source(
     if "!" in range_ref:
         range_sheet_name, cell_range = range_ref.rsplit("!", 1)
         range_sheet_name = range_sheet_name.strip("'")
-        if range_sheet_name not in workbook.sheetnames:
-            raise ValidationError(f"Sheet '{range_sheet_name}' referenced in range not found")
-        source_worksheet = workbook[range_sheet_name]
+        source_worksheet = require_worksheet(
+            workbook,
+            range_sheet_name,
+            error_cls=ValidationError,
+            operation="chart data ranges",
+        )
     else:
         source_worksheet = default_worksheet
         cell_range = range_ref
@@ -443,11 +446,12 @@ def create_chart_in_sheet(
 
     try:
         with safe_workbook(filepath, save=True) as wb:
-            if sheet_name not in wb.sheetnames:
-                logger.error(f"Sheet '{sheet_name}' not found")
-                raise ValidationError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=ValidationError,
+                operation="creating embedded charts",
+            )
             source_worksheet, start_row, start_col, end_row, end_col = _resolve_range_source(
                 wb,
                 worksheet,
@@ -543,10 +547,12 @@ def create_chart_from_series(
 
     try:
         with safe_workbook(filepath, save=True) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise ValidationError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=ValidationError,
+                operation="creating embedded charts",
+            )
             chart_type_lower, _ = _resolve_chart_class(chart_type)
             chart = _build_chart(chart_type_lower, title=title, x_axis=x_axis, y_axis=y_axis)
 

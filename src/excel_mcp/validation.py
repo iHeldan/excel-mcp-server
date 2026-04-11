@@ -7,7 +7,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from .cell_utils import parse_cell_range, validate_cell_reference
 from .exceptions import ValidationError
-from .workbook import safe_workbook
+from .workbook import require_worksheet, safe_workbook
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +20,6 @@ def validate_formula_in_cell_operation(
     """Validate Excel formula before writing"""
     try:
         with safe_workbook(filepath) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise ValidationError(f"Sheet '{sheet_name}' not found")
-
             if not validate_cell_reference(cell):
                 raise ValidationError(f"Invalid cell reference: {cell}")
 
@@ -43,7 +40,12 @@ def validate_formula_in_cell_operation(
                         raise ValidationError(f"Invalid cell reference in formula: {ref}")
 
             # Now check if there's a formula in the cell and compare
-            sheet = wb[sheet_name]
+            sheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=ValidationError,
+                operation="formula validation",
+            )
             cell_obj = sheet[cell]
             current_formula = cell_obj.value
 
@@ -103,10 +105,12 @@ def validate_range_in_sheet_operation(
     """Validate if a range exists in a worksheet and return data range info."""
     try:
         with safe_workbook(filepath) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise ValidationError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=ValidationError,
+                operation="range validation",
+            )
 
             # Get actual data dimensions
             data_max_row = worksheet.max_row

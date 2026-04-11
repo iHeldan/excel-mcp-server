@@ -12,35 +12,10 @@ from openpyxl.utils import column_index_from_string, get_column_letter
 from .exceptions import DataError
 from .cell_utils import parse_cell_range
 from .cell_validation import get_data_validation_for_cell
-from .workbook import safe_workbook
+from .workbook import first_worksheet, require_worksheet, safe_workbook
 
 logger = logging.getLogger(__name__)
 ROW_MODES = {"arrays", "objects"}
-
-
-def _require_worksheet(wb: Any, sheet_name: str) -> Worksheet:
-    if sheet_name not in wb.sheetnames:
-        raise DataError(f"Sheet '{sheet_name}' not found")
-
-    ws = wb[sheet_name]
-    if not isinstance(ws, Worksheet):
-        raise DataError(
-            f"Sheet '{sheet_name}' is a chartsheet and cannot be used for cell-based operations"
-        )
-
-    return ws
-
-
-def _first_worksheet(wb: Any) -> tuple[str, Worksheet]:
-    if not wb.sheetnames:
-        raise DataError("Workbook contains no sheets")
-
-    worksheets = list(getattr(wb, "worksheets", []))
-    if not worksheets:
-        raise DataError("Workbook contains no worksheets")
-
-    worksheet = worksheets[0]
-    return worksheet.title, worksheet
 
 
 def _cell_address(row: int, col: int) -> str:
@@ -241,7 +216,12 @@ def read_excel_range(
     """Read data from Excel range with optional preview mode"""
     try:
         with safe_workbook(str(filepath)) as wb:
-            ws = _require_worksheet(wb, sheet_name)
+            ws = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=DataError,
+                operation="cell-based operations",
+            )
 
             # Parse start cell
             if ':' in start_cell:
@@ -322,10 +302,25 @@ def write_data(
                 active_sheet = wb.active
                 if active_sheet is None:
                     raise DataError("No active sheet found in workbook")
+                if not isinstance(active_sheet, Worksheet):
+                    raise DataError(
+                        f"Active sheet '{active_sheet.title}' is a chartsheet and cannot be used for cell-based operations"
+                    )
                 sheet_name = active_sheet.title
                 sheet_created = False
+                existing_ws = active_sheet
             else:
                 sheet_created = sheet_name not in wb.sheetnames
+                existing_ws = (
+                    None
+                    if sheet_created
+                    else require_worksheet(
+                        wb,
+                        sheet_name,
+                        error_cls=DataError,
+                        operation="cell-based operations",
+                    )
+                )
 
             # Validate start cell
             try:
@@ -346,7 +341,6 @@ def write_data(
                 target_range = start_cell
 
             changes: List[Dict[str, Any]] = []
-            existing_ws = wb[sheet_name] if not sheet_created else None
             for i, row in enumerate(data):
                 for j, val in enumerate(row):
                     row_idx = start_row + i
@@ -367,7 +361,7 @@ def write_data(
                 if sheet_created:
                     ws = wb.create_sheet(sheet_name)
                 else:
-                    ws = wb[sheet_name]
+                    ws = existing_ws
                 if not dry_run:
                     _write_data_to_worksheet(ws, data, start_cell)
 
@@ -441,7 +435,12 @@ def read_excel_range_with_metadata(
     """
     try:
         with safe_workbook(str(filepath)) as wb:
-            ws = _require_worksheet(wb, sheet_name)
+            ws = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=DataError,
+                operation="cell-based operations",
+            )
 
             # Parse start cell
             if ':' in start_cell:
@@ -542,7 +541,12 @@ def read_as_table(
     """
     try:
         with safe_workbook(str(filepath)) as wb:
-            ws = _require_worksheet(wb, sheet_name)
+            ws = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=DataError,
+                operation="cell-based operations",
+            )
             return _read_table_from_worksheet(
                 ws,
                 sheet_name,
@@ -629,10 +633,15 @@ def quick_read(
         with safe_workbook(str(filepath)) as wb:
             auto_selected_sheet = sheet_name is None
             if auto_selected_sheet:
-                resolved_sheet_name, ws = _first_worksheet(wb)
+                resolved_sheet_name, ws = first_worksheet(wb, error_cls=DataError)
             else:
                 resolved_sheet_name = sheet_name
-                ws = _require_worksheet(wb, resolved_sheet_name)
+                ws = require_worksheet(
+                    wb,
+                    resolved_sheet_name,
+                    error_cls=DataError,
+                    operation="cell-based operations",
+                )
 
             result = _read_table_from_worksheet(
                 ws,
@@ -674,7 +683,12 @@ def search_cells(
     """Search for cells matching a value."""
     try:
         with safe_workbook(str(filepath)) as wb:
-            ws = _require_worksheet(wb, sheet_name)
+            ws = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=DataError,
+                operation="cell-based operations",
+            )
             results = []
 
             for row in range(1, ws.max_row + 1):
@@ -724,10 +738,12 @@ def append_table_rows(
             raise DataError("Rows must be a list of objects keyed by column name")
 
         with safe_workbook(str(filepath), save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise DataError(f"Sheet '{sheet_name}' not found")
-
-            ws = wb[sheet_name]
+            ws = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=DataError,
+                operation="appending tabular rows",
+            )
             header_map = _get_header_map(ws, header_row)
             unknown_columns = sorted(
                 {
@@ -811,10 +827,12 @@ def update_rows_by_key(
             raise DataError("Updates must be a list of objects keyed by column name")
 
         with safe_workbook(str(filepath), save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise DataError(f"Sheet '{sheet_name}' not found")
-
-            ws = wb[sheet_name]
+            ws = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=DataError,
+                operation="updating tabular rows",
+            )
             header_map = _get_header_map(ws, header_row)
             if key_column not in header_map:
                 raise DataError(f"Key column '{key_column}' not found")

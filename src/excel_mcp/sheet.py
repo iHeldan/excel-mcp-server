@@ -9,7 +9,7 @@ from openpyxl.styles import Font, Border, PatternFill, Side
 
 from .cell_utils import parse_cell_range, validate_cell_reference
 from .exceptions import SheetError, ValidationError
-from .workbook import safe_workbook
+from .workbook import require_worksheet, safe_workbook
 
 logger = logging.getLogger(__name__)
 
@@ -56,13 +56,15 @@ def copy_sheet(filepath: str, source_sheet: str, target_sheet: str) -> Dict[str,
     """Copy a worksheet within the same workbook."""
     try:
         with safe_workbook(filepath, save=True) as wb:
-            if source_sheet not in wb.sheetnames:
-                raise SheetError(f"Source sheet '{source_sheet}' not found")
-
             if target_sheet in wb.sheetnames:
                 raise SheetError(f"Target sheet '{target_sheet}' already exists")
 
-            source = wb[source_sheet]
+            source = require_worksheet(
+                wb,
+                source_sheet,
+                error_cls=SheetError,
+                operation="copying worksheets",
+            )
             target = wb.copy_worksheet(source)
             target.title = target_sheet
 
@@ -214,10 +216,12 @@ def get_sheet_protection(filepath: str, sheet_name: str) -> Dict[str, Any]:
     """Return worksheet protection state and option flags."""
     try:
         with safe_workbook(filepath) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="worksheet protection operations",
+            )
             return {
                 "sheet_name": sheet_name,
                 **_sheet_protection_state(worksheet),
@@ -256,10 +260,12 @@ def set_sheet_protection(
                     raise ValidationError(f"Protection option '{key}' must be true or false")
 
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="worksheet protection operations",
+            )
             previous_state = _sheet_protection_state(worksheet)
 
             worksheet.protection.sheet = enabled
@@ -378,10 +384,12 @@ def set_print_area(
         )
 
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="print layout operations",
+            )
             previous_area = _display_print_area(worksheet)
             worksheet.print_area = normalized_range
             current_area = _display_print_area(worksheet)
@@ -435,10 +443,12 @@ def set_print_titles(
         )
 
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="print layout operations",
+            )
             previous_rows = _display_print_title_rows(worksheet)
             previous_columns = _display_print_title_columns(worksheet)
 
@@ -511,10 +521,12 @@ def set_column_widths(
             )
 
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="column sizing operations",
+            )
             changes = []
             for column_letter, width_value in normalized_widths.items():
                 old_value = worksheet.column_dimensions[column_letter].width
@@ -571,10 +583,12 @@ def set_row_heights(
             )
 
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="row sizing operations",
+            )
             changes = []
             for row_number, height_value in normalized_heights.items():
                 old_value = worksheet.row_dimensions[row_number].height
@@ -626,10 +640,12 @@ def autofit_columns(
                 raise ValidationError("Maximum width must be greater than or equal to minimum width")
 
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="auto-fitting columns",
+            )
             if columns:
                 normalized_columns = []
                 for column_key in columns:
@@ -801,16 +817,18 @@ def merge_range(
     """Merge a range of cells."""
     try:
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
             start_row, start_col, end_row, end_col = parse_cell_range(start_cell, end_cell)
 
             if end_row is None or end_col is None:
                 raise SheetError("Both start and end cells must be specified for merging")
 
             range_string = format_range_string(start_row, start_col, end_row, end_col)
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="merging cells",
+            )
             worksheet.merge_cells(range_string)
         return _attach_changes({
             "message": f"Range '{range_string}' {'would be merged' if dry_run else 'merged'} in sheet '{sheet_name}'",
@@ -840,10 +858,12 @@ def unmerge_range(
     """Unmerge a range of cells."""
     try:
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="merging cells",
+            )
 
             start_row, start_col, end_row, end_col = parse_cell_range(start_cell, end_cell)
 
@@ -881,9 +901,12 @@ def get_merged_ranges(filepath: str, sheet_name: str) -> list[str]:
     """Get merged cells in a worksheet."""
     try:
         with safe_workbook(filepath) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="merged-cell inspection",
+            )
             return [str(merged_range) for merged_range in worksheet.merged_cells.ranges]
     except SheetError as e:
         logger.error(str(e))
@@ -903,10 +926,12 @@ def set_freeze_panes(
     """Set or clear worksheet freeze panes."""
     try:
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="freeze panes",
+            )
             previous_value = worksheet.freeze_panes
             previous_cell = previous_value.coordinate if hasattr(previous_value, "coordinate") else previous_value
 
@@ -952,10 +977,12 @@ def set_auto_filter(
     """Set worksheet autofilter for an explicit or inferred range."""
     try:
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="auto filters",
+            )
             previous_ref = worksheet.auto_filter.ref
 
             resolved_ref = range_ref
@@ -1003,15 +1030,19 @@ def copy_range_operation(
     """Copy a range of cells to another location."""
     try:
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                logger.error(f"Sheet '{sheet_name}' not found")
-                raise ValidationError(f"Sheet '{sheet_name}' not found")
-
-            source_ws = wb[sheet_name]
+            source_ws = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=ValidationError,
+                operation="copying cell ranges",
+            )
             resolved_target_sheet = target_sheet or sheet_name
-            if resolved_target_sheet not in wb.sheetnames:
-                raise ValidationError(f"Target sheet '{resolved_target_sheet}' not found")
-            target_ws = wb[resolved_target_sheet]
+            target_ws = require_worksheet(
+                wb,
+                resolved_target_sheet,
+                error_cls=ValidationError,
+                operation="copying cell ranges",
+            )
 
             # Parse source range
             try:
@@ -1077,10 +1108,12 @@ def delete_range_operation(
     """Delete a range of cells and shift remaining cells."""
     try:
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="deleting cell ranges",
+            )
 
             # Validate range
             try:
@@ -1149,10 +1182,12 @@ def insert_row(
     """Insert one or more rows starting at the specified row."""
     try:
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="inserting rows",
+            )
 
             # Validate parameters
             if start_row < 1:
@@ -1192,10 +1227,12 @@ def insert_cols(
     """Insert one or more columns starting at the specified column."""
     try:
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="inserting columns",
+            )
 
             # Validate parameters
             if start_col < 1:
@@ -1235,10 +1272,12 @@ def delete_rows(
     """Delete one or more rows starting at the specified row."""
     try:
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="deleting rows",
+            )
 
             # Validate parameters
             if start_row < 1:
@@ -1280,10 +1319,12 @@ def delete_cols(
     """Delete one or more columns starting at the specified column."""
     try:
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            worksheet = wb[sheet_name]
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="deleting columns",
+            )
 
             # Validate parameters
             if start_col < 1:

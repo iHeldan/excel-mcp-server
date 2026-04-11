@@ -11,7 +11,7 @@ from openpyxl.formatting.rule import (
 )
 from openpyxl.worksheet.worksheet import Worksheet
 
-from .workbook import safe_workbook
+from .workbook import require_worksheet, safe_workbook
 from .cell_utils import parse_cell_range, validate_cell_reference
 from .exceptions import ValidationError, FormattingError
 
@@ -342,10 +342,12 @@ def format_range(
     """
     try:
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise ValidationError(f"Sheet '{sheet_name}' not found")
-
-            sheet = wb[sheet_name]
+            sheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=ValidationError,
+                operation="formatting cells",
+            )
             applied = _apply_format_to_sheet(
                 sheet,
                 sheet_name=sheet_name,
@@ -397,10 +399,12 @@ def format_ranges(
             raise FormattingError("At least one format operation must be provided")
 
         with safe_workbook(filepath, save=not dry_run) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise ValidationError(f"Sheet '{sheet_name}' not found")
-
-            sheet = wb[sheet_name]
+            sheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=ValidationError,
+                operation="formatting cells",
+            )
             applied_ranges: List[str] = []
             previews: List[Dict[str, Any]] = []
             errors: List[Dict[str, Any]] = []

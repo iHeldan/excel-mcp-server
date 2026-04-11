@@ -5,6 +5,7 @@ from typing import Any
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.worksheet import Worksheet
 
 from .exceptions import WorkbookError
 
@@ -37,6 +38,40 @@ def _freeze_panes_value(ws) -> str | None:
 
 def _sheet_type(ws: Any) -> str:
     return "chartsheet" if ws.__class__.__name__ == "Chartsheet" else "worksheet"
+
+
+def require_worksheet(
+    wb: Any,
+    sheet_name: str,
+    *,
+    error_cls: type[Exception] = WorkbookError,
+    operation: str = "worksheet operations",
+) -> Worksheet:
+    if sheet_name not in wb.sheetnames:
+        raise error_cls(f"Sheet '{sheet_name}' not found")
+
+    ws = wb[sheet_name]
+    if not isinstance(ws, Worksheet):
+        raise error_cls(
+            f"Sheet '{sheet_name}' is a chartsheet and cannot be used for {operation}"
+        )
+    return ws
+
+
+def first_worksheet(
+    wb: Any,
+    *,
+    error_cls: type[Exception] = WorkbookError,
+) -> tuple[str, Worksheet]:
+    if not wb.sheetnames:
+        raise error_cls("Workbook contains no sheets")
+
+    worksheets = list(getattr(wb, "worksheets", []))
+    if not worksheets:
+        raise error_cls("Workbook contains no worksheets")
+
+    worksheet = worksheets[0]
+    return worksheet.title, worksheet
 
 
 def _serialize_named_ranges(wb: Any) -> list[dict[str, Any]]:

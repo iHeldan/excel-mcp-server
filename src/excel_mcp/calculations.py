@@ -1,7 +1,7 @@
 from typing import Any
 import logging
 
-from .workbook import safe_workbook
+from .workbook import require_worksheet, safe_workbook
 from .cell_utils import validate_cell_reference
 from .exceptions import ValidationError, CalculationError
 from .validation import validate_formula
@@ -29,10 +29,12 @@ def apply_formula(
             raise CalculationError(f"Invalid formula syntax: {message}")
 
         with safe_workbook(filepath, save=True) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise ValidationError(f"Sheet '{sheet_name}' not found")
-
-            sheet = wb[sheet_name]
+            sheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=ValidationError,
+                operation="applying formulas",
+            )
 
             try:
                 # Apply formula to the cell
