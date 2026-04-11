@@ -126,6 +126,8 @@ The most agent-friendly read tools are:
 - `read_excel_as_table`: compact `headers + rows` output for structured datasets, with `compact=True` for the smallest payload
 - `search_in_sheet`: exact or partial value search across a worksheet
 
+Workbook inventory tools such as `list_all_sheets`, `profile_workbook`, and `list_charts` surface both worksheets and chart sheets. Grid-oriented tools such as `quick_read`, `read_excel_table`, `create_table`, formatting, formulas, and validation require a real worksheet and return a clear chartsheet error if you target the wrong sheet type.
+
 The most agent-friendly write helpers for structured data are:
 
 - `upsert_excel_table_rows`: update matching rows in a native Excel table and append missing keys in one call

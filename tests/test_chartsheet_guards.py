@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, Reference
@@ -11,6 +13,10 @@ from excel_mcp.exceptions import (
     ValidationError,
 )
 from excel_mcp.formatting import format_range
+from excel_mcp.server import (
+    create_table as create_table_tool,
+    get_data_validation_info as get_data_validation_info_tool,
+)
 from excel_mcp.sheet import (
     copy_range_operation,
     copy_sheet,
@@ -19,6 +25,7 @@ from excel_mcp.sheet import (
     set_freeze_panes,
     set_print_area,
 )
+from excel_mcp.tables import create_excel_table
 from excel_mcp.validation import (
     validate_formula_in_cell_operation,
     validate_range_in_sheet_operation,
@@ -132,3 +139,25 @@ def test_write_operations_reject_chart_sheets_with_clear_errors(tmp_path):
             [{"Name": "Alice", "Value": 31}],
             dry_run=True,
         )
+
+
+def test_table_creation_rejects_chart_sheets_with_clear_errors(tmp_path):
+    filepath = _create_chart_workbook(tmp_path)
+
+    with pytest.raises(DataError, match="Sheet 'Charts' is a chartsheet"):
+        create_excel_table(filepath, "Charts", "A1:B2")
+
+    payload = json.loads(create_table_tool(filepath, "Charts", "A1:B2"))
+    assert payload["ok"] is False
+    assert payload["operation"] == "create_table"
+    assert "Sheet 'Charts' is a chartsheet" in payload["error"]["message"]
+
+
+def test_validation_info_tool_rejects_chart_sheets_with_clear_error(tmp_path):
+    filepath = _create_chart_workbook(tmp_path)
+
+    payload = json.loads(get_data_validation_info_tool(filepath, "Charts"))
+    assert payload["ok"] is False
+    assert payload["operation"] == "get_data_validation_info"
+    assert payload["error"]["type"] == "SheetError"
+    assert "Sheet 'Charts' is a chartsheet" in payload["error"]["message"]

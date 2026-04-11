@@ -32,6 +32,7 @@ from excel_mcp.workbook import (
     get_workbook_info,
     list_named_ranges as list_named_ranges_impl,
     profile_workbook as profile_workbook_impl,
+    require_worksheet,
 )
 from excel_mcp.data import (
     append_table_rows as append_table_rows_impl,
@@ -1317,10 +1318,12 @@ def get_data_validation_info(
         from excel_mcp.cell_validation import get_all_validation_ranges
 
         with safe_workbook(full_path) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise SheetError(f"Sheet '{sheet_name}' not found")
-
-            ws = wb[sheet_name]
+            ws = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=SheetError,
+                operation="data validation inspection",
+            )
             validations = get_all_validation_ranges(ws)
 
         return _success_response(

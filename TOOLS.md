@@ -202,7 +202,7 @@ Returns matches under `data.matches`:
 - `validate_excel_range(filepath: str, sheet_name: str, start_cell: str, end_cell: Optional[str] = None) -> str`
   Validates a cell or range reference against the worksheet.
 - `get_data_validation_info(filepath: str, sheet_name: str) -> str`
-  Returns JSON for data-validation rules defined in the worksheet.
+  Returns JSON for data-validation rules defined in the worksheet. Chart sheets are rejected with a clear worksheet-only error.
 
 ## Formatting And Layout Tools
 
@@ -267,7 +267,7 @@ Returns matches under `data.matches`:
 ## Table, Chart, And Pivot Tools
 
 - `create_table(filepath: str, sheet_name: str, data_range: str, table_name: Optional[str] = None, table_style: str = "TableStyleMedium9") -> str`
-  Creates a native Excel table from an existing range.
+  Creates a native Excel table from an existing range. Requires a worksheet target; chart sheets cannot host native Excel tables.
 - `list_charts(filepath: str, sheet_name: Optional[str] = None) -> str`
   Lists embedded charts across the workbook or for one worksheet, including chart type, anchor, titles, dimensions, and series references.
 - `create_chart(filepath: str, sheet_name: str, chart_type: str, target_cell: str, data_range: Optional[str] = None, title: str = "", x_axis: str = "", y_axis: str = "", style: Optional[Dict[str, Any]] = None, series: Optional[List[Dict[str, Any]]] = None, categories_range: Optional[str] = None, width: Optional[float] = None, height: Optional[float] = None) -> str`
@@ -281,6 +281,7 @@ Returns matches under `data.matches`:
 
 - Use `list_all_sheets` before reading unfamiliar workbooks.
 - Use `profile_workbook` when you need a one-call inventory of sheets, tables, charts, filters, freeze panes, and print/protection state before deciding what to mutate.
+- Use workbook inventory tools to discover `sheet_type` first when the workbook may contain chart sheets; cell-grid tools reject chart sheets with clear worksheet-only errors.
 - Use `read_excel_table` when the workbook already contains native Excel tables and you want exact table semantics instead of a sheet-wide read.
 - Use `row_mode="objects"` when the agent benefits more from named fields than the smallest possible payload.
 - Use `infer_schema=True` when downstream steps need lightweight type hints without doing a second pass over the rows.

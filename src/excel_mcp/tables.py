@@ -6,7 +6,7 @@ from openpyxl.utils import get_column_letter, range_boundaries
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from .data import _build_cell_change, _should_include_changes, augment_tabular_payload
 from .exceptions import DataError
-from .workbook import safe_workbook
+from .workbook import require_worksheet, safe_workbook
 
 logger = logging.getLogger(__name__)
 
@@ -174,10 +174,12 @@ def create_excel_table(
     """
     try:
         with safe_workbook(filepath, save=True) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise DataError(f"Sheet '{sheet_name}' not found.")
-
-            ws = wb[sheet_name]
+            ws = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=DataError,
+                operation="table creation",
+            )
 
             # If no table name is provided, generate a unique one
             if not table_name:
