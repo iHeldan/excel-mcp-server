@@ -115,6 +115,7 @@ For chart authoring, prefer `create_chart` as the primary entry point:
 - use `data_range` for the simple contiguous-data path
 - use explicit `series` plus optional `categories_range` for non-contiguous or hand-authored charts
 - use top-level `width` and `height` to control chart size in centimeters; defaults are `15 x 7.5`
+- use `placement` when you want SheetForge to position the chart relative to worksheet content, a source range, or a named table instead of guessing `target_cell` manually
 - keep `create_chart_from_series` for backward compatibility or existing prompts that already rely on it
 
 The most agent-friendly read tools are:

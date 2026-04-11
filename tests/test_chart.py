@@ -2,6 +2,7 @@ import json
 
 import pytest
 from openpyxl import load_workbook
+from openpyxl.utils.cell import range_boundaries
 
 from excel_mcp.chart import ChartType, create_chart_from_series, create_chart_in_sheet, list_charts
 from excel_mcp.exceptions import ValidationError, ChartError
@@ -166,6 +167,7 @@ def test_chart_dimensions_can_be_set_with_top_level_params(chart_workbook):
     created_chart = next(chart for chart in charts if chart["anchor"] == "E1")
     assert created_chart["width"] == 12
     assert created_chart["height"] == 8
+    assert created_chart["occupied_range"].startswith("E1:")
 
 
 def test_chart_dimensions_fallback_to_legacy_style_keys(chart_workbook):
@@ -253,6 +255,99 @@ def test_create_chart_can_use_explicit_series_definitions(chart_workbook):
     assert len(created_chart["series"]) == 2
 
 
+def test_create_chart_can_auto_place_to_right_of_data_range(chart_workbook):
+    result = create_chart_in_sheet(
+        chart_workbook,
+        "Sales",
+        "A1:B5",
+        "bar",
+        placement={"relative_to": "data_range", "direction": "right", "padding_columns": 2},
+    )
+
+    assert result["details"]["location"] == "E1"
+    assert result["details"]["placement"]["relative_to"] == "data_range"
+    assert result["details"]["occupied_range"].startswith("E1:")
+
+
+def test_create_chart_from_series_can_auto_place_below_used_range(chart_workbook):
+    result = create_chart_from_series(
+        chart_workbook,
+        "Sales",
+        "bar",
+        series=[{"title": "Revenue", "values_range": "B2:B5"}],
+        categories_range="A2:A5",
+        placement={"relative_to": "used_range", "direction": "below", "padding_rows": 1},
+    )
+
+    assert result["details"]["location"] == "A7"
+    assert result["details"]["placement"]["relative_to"] == "used_range"
+
+
+def test_create_chart_can_auto_place_below_table(chart_workbook):
+    from excel_mcp.tables import create_excel_table
+
+    create_excel_table(chart_workbook, "Sales", "A1:C5", table_name="SalesData")
+    result = create_chart_in_sheet(
+        chart_workbook,
+        "Sales",
+        "A1:C5",
+        "line",
+        placement={"relative_to": "table:SalesData", "direction": "below", "padding_rows": 2},
+    )
+
+    assert result["details"]["location"] == "A8"
+    assert result["details"]["placement"]["relative_to"] == "table:SalesData"
+
+
+def test_content_placement_accounts_for_existing_chart_footprint(chart_workbook):
+    first_chart = create_chart_in_sheet(
+        chart_workbook,
+        "Sales",
+        "A1:B5",
+        "bar",
+        "E1",
+        width=12,
+        height=8,
+    )
+
+    _, _, first_max_col, _ = range_boundaries(first_chart["details"]["occupied_range"])
+    second_chart = create_chart_in_sheet(
+        chart_workbook,
+        "Sales",
+        "A1:C5",
+        "line",
+        placement={"relative_to": "content", "direction": "right", "padding_columns": 1},
+    )
+
+    second_min_col, second_min_row, _, _ = range_boundaries(second_chart["details"]["occupied_range"])
+    assert second_min_row == 1
+    assert second_min_col == first_max_col + 2
+
+
+def test_default_placement_falls_back_to_target_sheet_content_for_cross_sheet_data(chart_workbook):
+    wb = load_workbook(chart_workbook)
+    source = wb.create_sheet("Source")
+    source["A1"] = "Month"
+    source["B1"] = "Users"
+    source["A2"] = "Jan"
+    source["B2"] = 10
+    source["A3"] = "Feb"
+    source["B3"] = 15
+    wb.save(chart_workbook)
+    wb.close()
+
+    result = create_chart_in_sheet(
+        chart_workbook,
+        "Sales",
+        "Source!A1:B3",
+        "bar",
+        placement={"direction": "below"},
+    )
+
+    assert result["details"]["location"] == "A7"
+    assert result["details"]["placement"]["relative_to"] == "content"
+
+
 def test_create_scatter_chart_from_series(chart_workbook):
     result = create_chart_from_series(
         chart_workbook,
@@ -289,6 +384,7 @@ def test_list_charts_returns_created_chart_metadata(chart_workbook):
     assert charts[0]["anchor"] == "E1"
     assert charts[0]["width"] == 15
     assert charts[0]["height"] == 7.5
+    assert charts[0]["occupied_range"].startswith("E1:")
     assert len(charts[0]["series"]) == 2
 
 
@@ -374,6 +470,22 @@ def test_create_chart_tool_accepts_top_level_dimensions(chart_workbook):
     assert payload["data"]["details"]["height"] == 9
 
 
+def test_create_chart_tool_accepts_placement_without_target_cell(chart_workbook):
+    payload = _load_tool_payload(
+        create_chart_tool(
+            chart_workbook,
+            "Sales",
+            "bar",
+            data_range="A1:B5",
+            placement={"relative_to": "data_range", "direction": "right", "padding_columns": 2},
+        )
+    )
+
+    assert payload["operation"] == "create_chart"
+    assert payload["data"]["details"]["location"] == "E1"
+    assert payload["data"]["details"]["placement"]["relative_to"] == "data_range"
+
+
 # --- Error cases ---
 
 def test_chart_invalid_sheet(chart_workbook):
@@ -416,6 +528,18 @@ def test_chart_requires_data_range_or_series(chart_workbook):
 def test_chart_invalid_target_cell(chart_workbook):
     with pytest.raises((ValidationError, ChartError)):
         create_chart_in_sheet(chart_workbook, "Sales", "A1:B5", "bar", "")
+
+
+def test_chart_rejects_target_cell_and_placement_together(chart_workbook):
+    with pytest.raises(ValidationError, match="either target_cell or placement, not both"):
+        create_chart_in_sheet(
+            chart_workbook,
+            "Sales",
+            "A1:B5",
+            "bar",
+            "E1",
+            placement={"relative_to": "data_range", "direction": "right"},
+        )
 
 
 def test_chart_cross_sheet_reference_invalid(chart_workbook):

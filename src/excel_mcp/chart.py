@@ -1,5 +1,6 @@
 from enum import Enum
 import logging
+import math
 from typing import Any, Dict, List, Optional
 
 from openpyxl.chart import (
@@ -16,6 +17,7 @@ from openpyxl.chart.legend import Legend
 from openpyxl.chart.axis import ChartLines
 from openpyxl.utils import column_index_from_string, get_column_letter
 from openpyxl.utils.units import EMU_to_cm
+from openpyxl.utils.cell import range_boundaries
 
 from .cell_utils import parse_cell_range
 from .exceptions import ValidationError, ChartError
@@ -24,6 +26,8 @@ from .workbook import require_worksheet, safe_workbook
 logger = logging.getLogger(__name__)
 DEFAULT_CHART_WIDTH = 15.0
 DEFAULT_CHART_HEIGHT = 7.5
+DEFAULT_COLUMN_WIDTH = 8.43
+DEFAULT_ROW_HEIGHT = 15.0
 
 class ChartType(str, Enum):
     """Supported chart types"""
@@ -156,6 +160,297 @@ def _extract_chart_dimensions(chart: Any) -> tuple[Optional[float], Optional[flo
     return getattr(chart, "width", None), getattr(chart, "height", None)
 
 
+def _bounds_to_range(min_row: int, min_col: int, max_row: int, max_col: int) -> str:
+    return f"{get_column_letter(min_col)}{min_row}:{get_column_letter(max_col)}{max_row}"
+
+
+def _column_width_to_pixels(width: float) -> int:
+    if width <= 0:
+        return 1
+    if width < 1:
+        return max(int(round(width * 12)), 1)
+    return max(int(math.floor(width * 7 + 5)), 1)
+
+
+def _row_height_to_pixels(height_points: float) -> int:
+    if height_points <= 0:
+        return 1
+    return max(int(round(height_points * 96 / 72)), 1)
+
+
+def _cm_to_pixels(value_cm: float) -> int:
+    return max(int(math.ceil((value_cm / 2.54) * 96)), 1)
+
+
+def _column_display_width(worksheet: Any, column_index: int) -> float:
+    column_letter = get_column_letter(column_index)
+    width = worksheet.column_dimensions[column_letter].width
+    if width is not None:
+        return float(width)
+
+    default_width = getattr(getattr(worksheet, "sheet_format", None), "defaultColWidth", None)
+    if default_width is not None:
+        return float(default_width)
+    return DEFAULT_COLUMN_WIDTH
+
+
+def _row_display_height(worksheet: Any, row_index: int) -> float:
+    height = worksheet.row_dimensions[row_index].height
+    if height is not None:
+        return float(height)
+
+    default_height = getattr(getattr(worksheet, "sheet_format", None), "defaultRowHeight", None)
+    if default_height is not None:
+        return float(default_height)
+    return DEFAULT_ROW_HEIGHT
+
+
+def _chart_bounds_from_anchor(
+    worksheet: Any,
+    anchor_cell: str,
+    *,
+    width: float,
+    height: float,
+) -> tuple[int, int, int, int]:
+    _validate_target_cell(anchor_cell)
+    start_row, start_col, _, _ = parse_cell_range(anchor_cell)
+
+    remaining_width = _cm_to_pixels(width)
+    end_col = start_col
+    while remaining_width > 0:
+        remaining_width -= _column_width_to_pixels(_column_display_width(worksheet, end_col))
+        if remaining_width > 0:
+            end_col += 1
+
+    remaining_height = _cm_to_pixels(height)
+    end_row = start_row
+    while remaining_height > 0:
+        remaining_height -= _row_height_to_pixels(_row_display_height(worksheet, end_row))
+        if remaining_height > 0:
+            end_row += 1
+
+    return start_row, start_col, end_row, end_col
+
+
+def _grid_bounds(worksheet: Any) -> Optional[tuple[int, int, int, int]]:
+    is_empty = (
+        worksheet.max_row == 1
+        and worksheet.max_column == 1
+        and worksheet.cell(1, 1).value is None
+    )
+    if is_empty:
+        return None
+    return 1, 1, worksheet.max_row, worksheet.max_column
+
+
+def _union_bounds(
+    first: Optional[tuple[int, int, int, int]],
+    second: Optional[tuple[int, int, int, int]],
+) -> Optional[tuple[int, int, int, int]]:
+    if first is None:
+        return second
+    if second is None:
+        return first
+
+    return (
+        min(first[0], second[0]),
+        min(first[1], second[1]),
+        max(first[2], second[2]),
+        max(first[3], second[3]),
+    )
+
+
+def _chart_occupied_range(
+    worksheet: Any,
+    anchor_cell: str,
+    *,
+    width: float,
+    height: float,
+) -> str:
+    start_row, start_col, end_row, end_col = _chart_bounds_from_anchor(
+        worksheet,
+        anchor_cell,
+        width=width,
+        height=height,
+    )
+    return _bounds_to_range(start_row, start_col, end_row, end_col)
+
+
+def _existing_chart_bounds(worksheet: Any) -> Optional[tuple[int, int, int, int]]:
+    bounds: Optional[tuple[int, int, int, int]] = None
+    for chart in getattr(worksheet, "_charts", []):
+        anchor = _extract_chart_anchor(chart)
+        if not anchor:
+            continue
+        width, height = _extract_chart_dimensions(chart)
+        chart_bounds = _chart_bounds_from_anchor(
+            worksheet,
+            anchor,
+            width=width or DEFAULT_CHART_WIDTH,
+            height=height or DEFAULT_CHART_HEIGHT,
+        )
+        bounds = _union_bounds(bounds, chart_bounds)
+    return bounds
+
+
+def _worksheet_content_bounds(worksheet: Any) -> Optional[tuple[int, int, int, int]]:
+    return _union_bounds(_grid_bounds(worksheet), _existing_chart_bounds(worksheet))
+
+
+def _placement_reference_bounds(
+    workbook: Any,
+    worksheet: Any,
+    *,
+    relative_to: Optional[str],
+    data_range: Optional[str],
+) -> Optional[tuple[int, int, int, int]]:
+    reference = relative_to or ""
+    normalized_reference = reference.strip().lower()
+
+    if normalized_reference in {"", "content"}:
+        return _worksheet_content_bounds(worksheet)
+
+    if normalized_reference == "used_range":
+        return _grid_bounds(worksheet)
+
+    if normalized_reference == "data_range":
+        if not data_range:
+            raise ValidationError("placement.relative_to='data_range' requires data_range")
+        source_worksheet, start_row, start_col, end_row, end_col = _resolve_range_source(
+            workbook,
+            worksheet,
+            data_range,
+        )
+        if source_worksheet.title != worksheet.title:
+            raise ValidationError(
+                "placement.relative_to='data_range' only works when chart data is on the target worksheet"
+            )
+        return start_row, start_col, end_row, end_col
+
+    if normalized_reference.startswith("table:"):
+        table_name = reference.split(":", 1)[1].strip()
+        if not table_name:
+            raise ValidationError("placement.relative_to='table:<name>' requires a table name")
+        for table in worksheet.tables.values():
+            if table.displayName == table_name:
+                min_col, min_row, max_col, max_row = range_boundaries(table.ref)
+                return min_row, min_col, max_row, max_col
+        raise ValidationError(f"Table '{table_name}' not found in worksheet '{worksheet.title}'")
+
+    if "!" in reference:
+        source_worksheet, start_row, start_col, end_row, end_col = _resolve_range_source(
+            workbook,
+            worksheet,
+            reference,
+        )
+        if source_worksheet.title != worksheet.title:
+            raise ValidationError("placement ranges must refer to the target worksheet")
+        return start_row, start_col, end_row, end_col
+
+    if ":" in reference:
+        try:
+            start_cell, end_cell = reference.split(":")
+            start_row, start_col, end_row, end_col = parse_cell_range(start_cell, end_cell)
+        except ValueError as exc:
+            raise ValidationError(f"Invalid placement range: {reference}") from exc
+        return start_row, start_col, end_row, end_col
+
+    raise ValidationError(
+        "placement.relative_to must be one of: content, used_range, data_range, "
+        "table:<name>, or a worksheet range like A1:C10"
+    )
+
+
+def _resolve_chart_anchor(
+    workbook: Any,
+    worksheet: Any,
+    *,
+    target_cell: Optional[str],
+    placement: Optional[Dict[str, Any]],
+    data_range: Optional[str],
+    width: float,
+    height: float,
+) -> tuple[str, Optional[Dict[str, Any]]]:
+    if target_cell and placement:
+        raise ValidationError("Provide either target_cell or placement, not both")
+
+    if placement is None:
+        if not target_cell:
+            raise ValidationError("Either target_cell or placement is required")
+        _validate_target_cell(target_cell)
+        return target_cell, None
+
+    if not isinstance(placement, dict):
+        raise ValidationError("placement must be an object")
+
+    direction = str(placement.get("direction", "right")).strip().lower()
+    if direction not in {"right", "below"}:
+        raise ValidationError("placement.direction must be either 'right' or 'below'")
+
+    def _coerce_padding(name: str, default: int) -> int:
+        raw_value = placement.get(name, default)
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(f"placement.{name} must be a non-negative integer") from exc
+        if value < 0:
+            raise ValidationError(f"placement.{name} must be a non-negative integer")
+        return value
+
+    padding_columns = _coerce_padding("padding_columns", 1)
+    padding_rows = _coerce_padding("padding_rows", 1)
+    relative_to = placement.get("relative_to")
+    if relative_to is None:
+        resolved_relative_to = "data_range" if data_range else "content"
+        try:
+            reference_bounds = _placement_reference_bounds(
+                workbook,
+                worksheet,
+                relative_to=resolved_relative_to,
+                data_range=data_range,
+            )
+        except ValidationError:
+            resolved_relative_to = "content"
+            reference_bounds = _placement_reference_bounds(
+                workbook,
+                worksheet,
+                relative_to=resolved_relative_to,
+                data_range=data_range,
+            )
+    else:
+        resolved_relative_to = str(relative_to)
+        reference_bounds = _placement_reference_bounds(
+            workbook,
+            worksheet,
+            relative_to=resolved_relative_to,
+            data_range=data_range,
+        )
+
+    if reference_bounds is None:
+        anchor_cell = "A1"
+    else:
+        min_row, min_col, max_row, max_col = reference_bounds
+        if direction == "right":
+            anchor_cell = f"{get_column_letter(max_col + padding_columns + 1)}{min_row}"
+        else:
+            anchor_cell = f"{get_column_letter(min_col)}{max_row + padding_rows + 1}"
+
+    occupied_range = _chart_occupied_range(
+        worksheet,
+        anchor_cell,
+        width=width,
+        height=height,
+    )
+    return anchor_cell, {
+        "mode": "placement",
+        "direction": direction,
+        "relative_to": resolved_relative_to,
+        "padding_columns": padding_columns,
+        "padding_rows": padding_rows,
+        "occupied_range": occupied_range,
+    }
+
+
 def _chart_type_name(chart: Any) -> str:
     class_name = type(chart).__name__
     if class_name.endswith("Chart"):
@@ -181,11 +476,12 @@ def list_charts(
                 for chart_index, chart in enumerate(getattr(worksheet, "_charts", []), start=1):
                     series = getattr(chart, "ser", None) or list(getattr(chart, "series", []))
                     width, height = _extract_chart_dimensions(chart)
+                    anchor = _extract_chart_anchor(chart)
                     chart_info = {
                         "sheet_name": current_sheet_name,
                         "chart_index": chart_index,
                         "chart_type": _chart_type_name(chart),
-                        "anchor": _extract_chart_anchor(chart),
+                        "anchor": anchor,
                         "title": _extract_title_text(getattr(chart, "title", None)),
                         "x_axis_title": _extract_title_text(
                             getattr(getattr(chart, "x_axis", None), "title", None)
@@ -199,6 +495,13 @@ def list_charts(
                         "height": height,
                         "series": [_extract_series_metadata(item) for item in series],
                     }
+                    if anchor and width and height:
+                        chart_info["occupied_range"] = _chart_occupied_range(
+                            worksheet,
+                            anchor,
+                            width=width,
+                            height=height,
+                        )
                     charts.append({key: value for key, value in chart_info.items() if value is not None})
 
             return charts
@@ -411,7 +714,7 @@ def create_chart_in_sheet(
     sheet_name: str,
     data_range: Optional[str],
     chart_type: str,
-    target_cell: str,
+    target_cell: Optional[str] = None,
     title: str = "",
     x_axis: str = "",
     y_axis: str = "",
@@ -420,6 +723,7 @@ def create_chart_in_sheet(
     categories_range: Optional[str] = None,
     width: Optional[float] = None,
     height: Optional[float] = None,
+    placement: Optional[Dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Create chart in sheet with either a contiguous data range or explicit series."""
     style = _normalize_style(style)
@@ -442,6 +746,7 @@ def create_chart_in_sheet(
             style=style,
             width=resolved_width,
             height=resolved_height,
+            placement=placement,
         )
 
     try:
@@ -459,6 +764,15 @@ def create_chart_in_sheet(
             )
             chart_type_lower, _ = _resolve_chart_class(chart_type)
             chart = _build_chart(chart_type_lower, title=title, x_axis=x_axis, y_axis=y_axis)
+            resolved_target_cell, placement_details = _resolve_chart_anchor(
+                wb,
+                worksheet,
+                target_cell=target_cell,
+                placement=placement,
+                data_range=data_range,
+                width=resolved_width,
+                height=resolved_height,
+            )
 
             try:
                 if chart_type_lower == "scatter":
@@ -502,20 +816,31 @@ def create_chart_in_sheet(
             _finalize_chart(
                 worksheet,
                 chart,
-                target_cell,
+                resolved_target_cell,
+                width=resolved_width,
+                height=resolved_height,
+            )
+            occupied_range = _chart_occupied_range(
+                worksheet,
+                resolved_target_cell,
                 width=resolved_width,
                 height=resolved_height,
             )
 
+        details = {
+            "type": chart_type,
+            "location": resolved_target_cell,
+            "data_range": data_range,
+            "width": resolved_width,
+            "height": resolved_height,
+            "occupied_range": occupied_range,
+        }
+        if placement_details is not None:
+            details["placement"] = placement_details
+
         return {
             "message": f"{chart_type.capitalize()} chart created successfully",
-            "details": {
-                "type": chart_type,
-                "location": target_cell,
-                "data_range": data_range,
-                "width": resolved_width,
-                "height": resolved_height,
-            }
+            "details": details,
         }
 
     except (ValidationError, ChartError):
@@ -529,8 +854,8 @@ def create_chart_from_series(
     filepath: str,
     sheet_name: str,
     chart_type: str,
-    target_cell: str,
-    series: List[Dict[str, Any]],
+    target_cell: Optional[str] = None,
+    series: Optional[List[Dict[str, Any]]] = None,
     title: str = "",
     x_axis: str = "",
     y_axis: str = "",
@@ -538,6 +863,7 @@ def create_chart_from_series(
     style: Optional[Dict[str, Any]] = None,
     width: Optional[float] = None,
     height: Optional[float] = None,
+    placement: Optional[Dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Create a chart from explicit series definitions."""
     normalized_style = _normalize_style(style)
@@ -555,6 +881,15 @@ def create_chart_from_series(
             )
             chart_type_lower, _ = _resolve_chart_class(chart_type)
             chart = _build_chart(chart_type_lower, title=title, x_axis=x_axis, y_axis=y_axis)
+            resolved_target_cell, placement_details = _resolve_chart_anchor(
+                wb,
+                worksheet,
+                target_cell=target_cell,
+                placement=placement,
+                data_range=None,
+                width=resolved_width,
+                height=resolved_height,
+            )
 
             if chart_type_lower == "scatter" and categories_range is not None:
                 raise ValidationError("categories_range is not supported for scatter charts")
@@ -605,21 +940,32 @@ def create_chart_from_series(
             _finalize_chart(
                 worksheet,
                 chart,
-                target_cell,
+                resolved_target_cell,
+                width=resolved_width,
+                height=resolved_height,
+            )
+            occupied_range = _chart_occupied_range(
+                worksheet,
+                resolved_target_cell,
                 width=resolved_width,
                 height=resolved_height,
             )
 
+        details = {
+            "type": chart_type,
+            "location": resolved_target_cell,
+            "series_count": len(series),
+            "categories_range": categories_range,
+            "width": resolved_width,
+            "height": resolved_height,
+            "occupied_range": occupied_range,
+        }
+        if placement_details is not None:
+            details["placement"] = placement_details
+
         return {
             "message": f"{chart_type.capitalize()} chart created successfully",
-            "details": {
-                "type": chart_type,
-                "location": target_cell,
-                "series_count": len(series),
-                "categories_range": categories_range,
-                "width": resolved_width,
-                "height": resolved_height,
-            },
+            "details": details,
         }
 
     except (ValidationError, ChartError):
