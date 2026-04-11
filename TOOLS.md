@@ -62,6 +62,7 @@ Returns workbook inventory under `data.sheets`:
     "sheets": [
       {
         "name": "Sheet1",
+        "sheet_type": "worksheet",
         "rows": 12,
         "columns": 4,
         "column_range": "A-D",
@@ -163,7 +164,7 @@ Returns matches under `data.matches`:
 - `list_named_ranges(filepath: str) -> str`
   Returns workbook defined names, their values, and any sheet/range destinations.
 - `list_all_sheets(filepath: str) -> str`
-  Returns one entry per worksheet, including `rows`, `columns`, `column_range`, and `is_empty`.
+  Returns one entry per sheet, including `sheet_type`. Worksheets include `rows`, `columns`, `column_range`, and `is_empty`; chart sheets are reported with `sheet_type="chartsheet"` and zero grid dimensions.
 - `list_tables(filepath: str, sheet_name: Optional[str] = None) -> str`
   Returns native Excel tables across the workbook or for one worksheet, including `sheet_name`, `table_name`, `range`, `style`, `headers`, row counts, and style flags.
 - `read_excel_table(filepath: str, table_name: str, sheet_name: Optional[str] = None, max_rows: Optional[int] = None, compact: bool = False, row_mode: str = "arrays", infer_schema: bool = False) -> str`

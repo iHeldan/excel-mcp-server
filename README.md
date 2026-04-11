@@ -122,7 +122,7 @@ The most agent-friendly read tools are:
 - `profile_workbook`: one-call inventory for sheets, tables, charts, named ranges, and key layout/protection state
 - `quick_read`: single-call compact table read that auto-selects the first sheet when needed
 - `read_excel_table`: read a native Excel table by `table_name` without guessing worksheet bounds
-- `list_all_sheets`: quick workbook inventory with sheet sizes and emptiness flags
+- `list_all_sheets`: quick workbook inventory with sheet sizes, emptiness flags, and `sheet_type` for worksheets versus chart sheets
 - `read_excel_as_table`: compact `headers + rows` output for structured datasets, with `compact=True` for the smallest payload
 - `search_in_sheet`: exact or partial value search across a worksheet
 

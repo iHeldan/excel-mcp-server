@@ -2,7 +2,10 @@ import pytest
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, Reference
 from excel_mcp.chart import create_chart_in_sheet
-from excel_mcp.server import profile_workbook as profile_workbook_tool
+from excel_mcp.server import (
+    list_all_sheets as list_all_sheets_tool,
+    profile_workbook as profile_workbook_tool,
+)
 from excel_mcp.tables import create_excel_table
 from excel_mcp.workbook import get_or_create_workbook, list_sheets, profile_workbook
 
@@ -35,12 +38,79 @@ def test_list_sheets_marks_empty_sheet(empty_workbook):
     assert result == [
         {
             "name": "Sheet",
+            "sheet_type": "worksheet",
             "rows": 0,
             "columns": 0,
             "column_range": None,
             "is_empty": True,
         }
     ]
+
+
+def test_list_sheets_handles_chart_sheets(tmp_path):
+    filepath = str(tmp_path / "chartsheet-list.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    for row in [("Name", "Value"), ("A", 1), ("B", 2)]:
+        ws.append(row)
+
+    chart = BarChart()
+    data = Reference(ws, min_col=2, min_row=1, max_row=3)
+    categories = Reference(ws, min_col=1, min_row=2, max_row=3)
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(categories)
+
+    chart_sheet = wb.create_chartsheet("Charts")
+    chart_sheet.add_chart(chart)
+    wb.save(filepath)
+    wb.close()
+
+    result = list_sheets(filepath)
+
+    assert result == [
+        {
+            "name": "Data",
+            "sheet_type": "worksheet",
+            "rows": 3,
+            "columns": 2,
+            "column_range": "A-B",
+            "is_empty": False,
+        },
+        {
+            "name": "Charts",
+            "sheet_type": "chartsheet",
+            "rows": 0,
+            "columns": 0,
+            "column_range": None,
+            "is_empty": False,
+        },
+    ]
+
+
+def test_list_all_sheets_tool_handles_chart_sheets(tmp_path):
+    filepath = str(tmp_path / "chartsheet-tool.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    for row in [("Name", "Value"), ("A", 1), ("B", 2)]:
+        ws.append(row)
+
+    chart = BarChart()
+    data = Reference(ws, min_col=2, min_row=1, max_row=3)
+    categories = Reference(ws, min_col=1, min_row=2, max_row=3)
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(categories)
+
+    chart_sheet = wb.create_chartsheet("Charts")
+    chart_sheet.add_chart(chart)
+    wb.save(filepath)
+    wb.close()
+
+    payload = list_all_sheets_tool(filepath)
+
+    assert '"operation": "list_all_sheets"' in payload
+    assert '"sheet_type": "chartsheet"' in payload
 
 
 def test_profile_workbook_summarizes_tables_and_charts(tmp_workbook):

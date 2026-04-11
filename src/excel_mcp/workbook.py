@@ -147,9 +147,23 @@ def list_sheets(filepath: str) -> list[dict[str, Any]]:
             sheets = []
             for name in wb.sheetnames:
                 ws = wb[name]
+                if _sheet_type(ws) == "chartsheet":
+                    sheets.append(
+                        {
+                            "name": name,
+                            "sheet_type": "chartsheet",
+                            "rows": 0,
+                            "columns": 0,
+                            "column_range": None,
+                            "is_empty": len(getattr(ws, "_charts", [])) == 0,
+                        }
+                    )
+                    continue
+
                 rows, columns, column_range, is_empty = _get_sheet_usage(ws)
                 sheets.append({
                     "name": name,
+                    "sheet_type": "worksheet",
                     "rows": rows,
                     "columns": columns,
                     "column_range": column_range,
