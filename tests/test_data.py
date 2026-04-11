@@ -1,5 +1,9 @@
 import json
 
+import pytest
+from openpyxl import Workbook
+from openpyxl.chart import BarChart, Reference
+
 from excel_mcp.data import (
     append_table_rows,
     quick_read as quick_read_impl,
@@ -10,6 +14,7 @@ from excel_mcp.data import (
     update_rows_by_key,
     write_data,
 )
+from excel_mcp.exceptions import DataError
 from excel_mcp.server import (
     list_all_sheets,
     quick_read,
@@ -25,6 +30,29 @@ def _load_tool_payload(raw: str) -> dict:
     assert "operation" in payload
     assert "message" in payload
     return payload
+
+
+def _create_chartsheet_first_workbook(tmp_path) -> str:
+    filepath = str(tmp_path / "chartsheet-first.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    for row in [("Name", "Value"), ("Alice", 30), ("Bob", 25)]:
+        ws.append(row)
+
+    chart = BarChart()
+    data = Reference(ws, min_col=2, min_row=1, max_row=3)
+    categories = Reference(ws, min_col=1, min_row=2, max_row=3)
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(categories)
+
+    chart_sheet = wb.create_chartsheet("Charts")
+    chart_sheet.add_chart(chart)
+    wb._sheets = [chart_sheet, ws]
+    wb.active = 0
+    wb.save(filepath)
+    wb.close()
+    return filepath
 
 
 def test_read_from_explicit_start_cell(tmp_workbook):
@@ -119,8 +147,6 @@ def test_read_as_table_schema_normalizes_and_dedupes_headers(tmp_path):
 
 
 def test_read_as_table_schema_transliterates_accented_headers(tmp_path):
-    from openpyxl import Workbook
-
     filepath = tmp_path / "schema-fi.xlsx"
     wb = Workbook()
     ws = wb.active
@@ -146,6 +172,20 @@ def test_read_as_table_schema_transliterates_accented_headers(tmp_path):
         "lisaklikit": 45,
         "ctr": 3.75,
     }
+
+
+def test_read_as_table_rejects_chart_sheet_with_clear_error(tmp_path):
+    filepath = _create_chartsheet_first_workbook(tmp_path)
+
+    with pytest.raises(DataError, match="Sheet 'Charts' is a chartsheet"):
+        read_as_table(filepath, "Charts")
+
+
+def test_read_excel_range_rejects_chart_sheet_with_clear_error(tmp_path):
+    filepath = _create_chartsheet_first_workbook(tmp_path)
+
+    with pytest.raises(DataError, match="Sheet 'Charts' is a chartsheet"):
+        read_excel_range(filepath, "Charts", start_cell="A1", end_cell="B2")
 
 def test_search_cells_finds_exact_match(tmp_workbook):
     results = search_cells(tmp_workbook, "Sheet1", "Alice")
@@ -185,8 +225,6 @@ def test_search_in_sheet_accepts_numeric_queries(tmp_workbook):
 
 
 def test_read_data_from_excel_preview_only_limits_output(tmp_path):
-    from openpyxl import Workbook
-
     filepath = tmp_path / "preview.xlsx"
     wb = Workbook()
     ws = wb.active
@@ -214,7 +252,6 @@ def test_read_data_from_excel_compact_omits_default_validation(tmp_workbook):
 
 
 def test_read_data_from_excel_compact_keeps_real_validation(tmp_path):
-    from openpyxl import Workbook
     from openpyxl.worksheet.datavalidation import DataValidation
 
     filepath = tmp_path / "validated.xlsx"
@@ -284,6 +321,26 @@ def test_read_excel_as_table_tool_can_return_records_and_schema(tmp_workbook):
     assert "rows" not in payload["data"]
 
 
+def test_read_excel_as_table_tool_rejects_chart_sheet_with_clear_error(tmp_path):
+    filepath = _create_chartsheet_first_workbook(tmp_path)
+
+    payload = json.loads(read_excel_as_table_tool(filepath, "Charts"))
+
+    assert payload["ok"] is False
+    assert payload["error"]["type"] == "DataError"
+    assert "Sheet 'Charts' is a chartsheet" in payload["error"]["message"]
+
+
+def test_read_data_from_excel_tool_rejects_chart_sheet_with_clear_error(tmp_path):
+    filepath = _create_chartsheet_first_workbook(tmp_path)
+
+    payload = json.loads(read_data_from_excel(filepath, "Charts", start_cell="A1", end_cell="B2"))
+
+    assert payload["ok"] is False
+    assert payload["error"]["type"] == "DataError"
+    assert "Sheet 'Charts' is a chartsheet" in payload["error"]["message"]
+
+
 def test_list_all_sheets_returns_json_envelope(tmp_workbook):
     payload = _load_tool_payload(list_all_sheets(tmp_workbook))
     assert payload["operation"] == "list_all_sheets"
@@ -325,6 +382,26 @@ def test_quick_read_tool_returns_json_envelope(multi_sheet_workbook):
     payload = _load_tool_payload(quick_read(multi_sheet_workbook))
     assert payload["operation"] == "quick_read"
     assert payload["data"]["sheet_name"] == "Sales"
+    assert payload["data"]["auto_selected_sheet"] is True
+
+
+def test_quick_read_skips_chartsheet_when_first_sheet_is_not_a_worksheet(tmp_path):
+    filepath = _create_chartsheet_first_workbook(tmp_path)
+
+    result = quick_read_impl(filepath)
+
+    assert result["sheet_name"] == "Data"
+    assert result["auto_selected_sheet"] is True
+    assert result["headers"] == ["Name", "Value"]
+
+
+def test_quick_read_tool_skips_chartsheet_when_first_sheet_is_not_a_worksheet(tmp_path):
+    filepath = _create_chartsheet_first_workbook(tmp_path)
+
+    payload = _load_tool_payload(quick_read(filepath))
+
+    assert payload["operation"] == "quick_read"
+    assert payload["data"]["sheet_name"] == "Data"
     assert payload["data"]["auto_selected_sheet"] is True
 
 

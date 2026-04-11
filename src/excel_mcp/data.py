@@ -18,6 +18,31 @@ logger = logging.getLogger(__name__)
 ROW_MODES = {"arrays", "objects"}
 
 
+def _require_worksheet(wb: Any, sheet_name: str) -> Worksheet:
+    if sheet_name not in wb.sheetnames:
+        raise DataError(f"Sheet '{sheet_name}' not found")
+
+    ws = wb[sheet_name]
+    if not isinstance(ws, Worksheet):
+        raise DataError(
+            f"Sheet '{sheet_name}' is a chartsheet and cannot be used for cell-based operations"
+        )
+
+    return ws
+
+
+def _first_worksheet(wb: Any) -> tuple[str, Worksheet]:
+    if not wb.sheetnames:
+        raise DataError("Workbook contains no sheets")
+
+    worksheets = list(getattr(wb, "worksheets", []))
+    if not worksheets:
+        raise DataError("Workbook contains no worksheets")
+
+    worksheet = worksheets[0]
+    return worksheet.title, worksheet
+
+
 def _cell_address(row: int, col: int) -> str:
     return f"{get_column_letter(col)}{row}"
 
@@ -216,10 +241,7 @@ def read_excel_range(
     """Read data from Excel range with optional preview mode"""
     try:
         with safe_workbook(str(filepath)) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise DataError(f"Sheet '{sheet_name}' not found")
-
-            ws = wb[sheet_name]
+            ws = _require_worksheet(wb, sheet_name)
 
             # Parse start cell
             if ':' in start_cell:
@@ -419,10 +441,7 @@ def read_excel_range_with_metadata(
     """
     try:
         with safe_workbook(str(filepath)) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise DataError(f"Sheet '{sheet_name}' not found")
-
-            ws = wb[sheet_name]
+            ws = _require_worksheet(wb, sheet_name)
 
             # Parse start cell
             if ':' in start_cell:
@@ -523,10 +542,7 @@ def read_as_table(
     """
     try:
         with safe_workbook(str(filepath)) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise DataError(f"Sheet '{sheet_name}' not found")
-
-            ws = wb[sheet_name]
+            ws = _require_worksheet(wb, sheet_name)
             return _read_table_from_worksheet(
                 ws,
                 sheet_name,
@@ -611,15 +627,13 @@ def quick_read(
     """
     try:
         with safe_workbook(str(filepath)) as wb:
-            if not wb.sheetnames:
-                raise DataError("Workbook contains no sheets")
-
             auto_selected_sheet = sheet_name is None
-            resolved_sheet_name = sheet_name or wb.sheetnames[0]
-            if resolved_sheet_name not in wb.sheetnames:
-                raise DataError(f"Sheet '{resolved_sheet_name}' not found")
+            if auto_selected_sheet:
+                resolved_sheet_name, ws = _first_worksheet(wb)
+            else:
+                resolved_sheet_name = sheet_name
+                ws = _require_worksheet(wb, resolved_sheet_name)
 
-            ws = wb[resolved_sheet_name]
             result = _read_table_from_worksheet(
                 ws,
                 resolved_sheet_name,
@@ -660,10 +674,7 @@ def search_cells(
     """Search for cells matching a value."""
     try:
         with safe_workbook(str(filepath)) as wb:
-            if sheet_name not in wb.sheetnames:
-                raise DataError(f"Sheet '{sheet_name}' not found")
-
-            ws = wb[sheet_name]
+            ws = _require_worksheet(wb, sheet_name)
             results = []
 
             for row in range(1, ws.max_row + 1):
