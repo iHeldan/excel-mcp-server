@@ -5,6 +5,7 @@
 ### Added
 
 - Added `next_start_row` to truncated tabular read responses so agents can continue pagination without recalculating offsets.
+- Added `find_free_canvas` plus `placement.relative_to="free_canvas"` so chart and dashboard workflows can discover non-overlapping layout slots automatically.
 
 ## 0.4.2 - 2026-04-11
 

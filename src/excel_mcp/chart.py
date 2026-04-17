@@ -297,6 +297,268 @@ def _worksheet_content_bounds(worksheet: Any) -> Optional[tuple[int, int, int, i
     return _union_bounds(_grid_bounds(worksheet), _existing_chart_bounds(worksheet))
 
 
+def _bounds_intersect(
+    first: tuple[int, int, int, int],
+    second: tuple[int, int, int, int],
+) -> bool:
+    return not (
+        first[2] < second[0]
+        or second[2] < first[0]
+        or first[3] < second[1]
+        or second[3] < first[1]
+    )
+
+
+def _inflate_bounds(
+    bounds: tuple[int, int, int, int],
+    *,
+    padding_rows: int = 0,
+    padding_columns: int = 0,
+) -> tuple[int, int, int, int]:
+    return (
+        max(bounds[0] - padding_rows, 1),
+        max(bounds[1] - padding_columns, 1),
+        bounds[2] + padding_rows,
+        bounds[3] + padding_columns,
+    )
+
+
+def _occupied_cell_bounds(worksheet: Any) -> list[tuple[int, int, int, int]]:
+    raw_cells = getattr(worksheet, "_cells", None)
+    if not isinstance(raw_cells, dict) or not raw_cells:
+        return []
+
+    row_to_columns: dict[int, list[int]] = {}
+    for key, cell in raw_cells.items():
+        value = getattr(cell, "value", None)
+        if value is None:
+            continue
+
+        if isinstance(key, tuple) and len(key) == 2:
+            row_index, column_index = key
+        else:
+            row_index = getattr(cell, "row", None)
+            column_index = getattr(cell, "column", None)
+
+        if row_index is None or column_index is None:
+            continue
+        row_to_columns.setdefault(int(row_index), []).append(int(column_index))
+
+    bounds: list[tuple[int, int, int, int]] = []
+    for row_index, columns in row_to_columns.items():
+        if not columns:
+            continue
+        sorted_columns = sorted(set(columns))
+        segment_start = sorted_columns[0]
+        segment_end = sorted_columns[0]
+        for column_index in sorted_columns[1:]:
+            if column_index == segment_end + 1:
+                segment_end = column_index
+                continue
+            bounds.append((row_index, segment_start, row_index, segment_end))
+            segment_start = column_index
+            segment_end = column_index
+        bounds.append((row_index, segment_start, row_index, segment_end))
+
+    return bounds
+
+
+def _merged_range_bounds(worksheet: Any) -> list[tuple[int, int, int, int]]:
+    bounds: list[tuple[int, int, int, int]] = []
+    for merged_range in getattr(getattr(worksheet, "merged_cells", None), "ranges", []):
+        min_col, min_row, max_col, max_row = range_boundaries(str(merged_range))
+        bounds.append((min_row, min_col, max_row, max_col))
+    return bounds
+
+
+def _table_bounds(worksheet: Any) -> list[tuple[int, int, int, int]]:
+    if not hasattr(worksheet, "tables"):
+        return []
+
+    bounds: list[tuple[int, int, int, int]] = []
+    for table in worksheet.tables.values():
+        min_col, min_row, max_col, max_row = range_boundaries(table.ref)
+        bounds.append((min_row, min_col, max_row, max_col))
+    return bounds
+
+
+def _existing_chart_occupied_bounds(worksheet: Any) -> list[tuple[int, int, int, int]]:
+    bounds: list[tuple[int, int, int, int]] = []
+    for chart in getattr(worksheet, "_charts", []):
+        anchor = _extract_chart_anchor(chart)
+        if not anchor:
+            continue
+        width, height = _extract_chart_dimensions(chart)
+        bounds.append(
+            _chart_bounds_from_anchor(
+                worksheet,
+                anchor,
+                width=width or DEFAULT_CHART_WIDTH,
+                height=height or DEFAULT_CHART_HEIGHT,
+            )
+        )
+    return bounds
+
+
+def _occupied_layout_bounds(worksheet: Any) -> dict[str, list[tuple[int, int, int, int]]]:
+    return {
+        "cells": _occupied_cell_bounds(worksheet),
+        "merged_ranges": _merged_range_bounds(worksheet),
+        "tables": _table_bounds(worksheet),
+        "charts": _existing_chart_occupied_bounds(worksheet),
+    }
+
+
+def _search_window(
+    worksheet: Any,
+    *,
+    search_rows: Optional[int],
+    search_columns: Optional[int],
+) -> tuple[int, int]:
+    occupied_bounds = _occupied_layout_bounds(worksheet)
+    max_occupied_row = max(
+        (bounds[2] for values in occupied_bounds.values() for bounds in values),
+        default=1,
+    )
+    max_occupied_col = max(
+        (bounds[3] for values in occupied_bounds.values() for bounds in values),
+        default=1,
+    )
+    resolved_rows = search_rows if search_rows is not None else max(max_occupied_row + 40, 60)
+    resolved_columns = (
+        search_columns if search_columns is not None else max(max_occupied_col + 20, 20)
+    )
+    return resolved_rows, resolved_columns
+
+
+def _candidate_bounds(
+    worksheet: Any,
+    anchor_cell: str,
+    *,
+    width: Optional[float],
+    height: Optional[float],
+    min_rows: Optional[int],
+    min_cols: Optional[int],
+) -> tuple[int, int, int, int]:
+    if width is not None or height is not None:
+        resolved_width, resolved_height = _resolve_chart_dimensions({}, width, height)
+        return _chart_bounds_from_anchor(
+            worksheet,
+            anchor_cell,
+            width=resolved_width,
+            height=resolved_height,
+        )
+
+    if min_rows is None or min_cols is None:
+        raise ValidationError("Provide both min_rows and min_cols when width/height are omitted")
+    if min_rows <= 0 or min_cols <= 0:
+        raise ValidationError("min_rows and min_cols must be positive integers")
+
+    start_row, start_col, _, _ = parse_cell_range(anchor_cell, anchor_cell)
+    end_row = start_row + min_rows - 1
+    end_col = start_col + min_cols - 1
+    return start_row, start_col, end_row, end_col
+
+
+def _find_free_canvas_slots_in_worksheet(
+    worksheet: Any,
+    *,
+    width: Optional[float] = None,
+    height: Optional[float] = None,
+    min_rows: Optional[int] = None,
+    min_cols: Optional[int] = None,
+    limit: int = 5,
+    origin_cell: str = "A1",
+    search_rows: Optional[int] = None,
+    search_columns: Optional[int] = None,
+    padding_rows: int = 0,
+    padding_columns: int = 0,
+) -> dict[str, Any]:
+    if limit <= 0:
+        raise ValidationError("limit must be a positive integer")
+    _validate_target_cell(origin_cell)
+    if padding_rows < 0 or padding_columns < 0:
+        raise ValidationError("padding_rows and padding_columns must be non-negative integers")
+
+    origin_row, origin_col, _, _ = parse_cell_range(origin_cell, origin_cell)
+    max_search_row, max_search_col = _search_window(
+        worksheet,
+        search_rows=search_rows,
+        search_columns=search_columns,
+    )
+    if origin_row > max_search_row or origin_col > max_search_col:
+        raise ValidationError("origin_cell falls outside the requested search window")
+
+    occupied_groups = _occupied_layout_bounds(worksheet)
+    blocked_bounds = [
+        _inflate_bounds(
+            bounds,
+            padding_rows=padding_rows,
+            padding_columns=padding_columns,
+        )
+        for values in occupied_groups.values()
+        for bounds in values
+    ]
+
+    resolved_width: Optional[float] = None
+    resolved_height: Optional[float] = None
+    if width is not None or height is not None or (min_rows is None and min_cols is None):
+        resolved_width, resolved_height = _resolve_chart_dimensions({}, width, height)
+
+    suggestions: list[dict[str, Any]] = []
+    reserved_bounds = list(blocked_bounds)
+    for row_index in range(origin_row, max_search_row + 1):
+        for col_index in range(origin_col, max_search_col + 1):
+            anchor_cell = f"{get_column_letter(col_index)}{row_index}"
+            candidate = _candidate_bounds(
+                worksheet,
+                anchor_cell,
+                width=resolved_width,
+                height=resolved_height,
+                min_rows=min_rows,
+                min_cols=min_cols,
+            )
+            if candidate[2] > max_search_row or candidate[3] > max_search_col:
+                continue
+            if any(_bounds_intersect(candidate, occupied) for occupied in reserved_bounds):
+                continue
+
+            suggestion = {
+                "anchor_cell": anchor_cell,
+                "occupied_range": _bounds_to_range(*candidate),
+                "row_span": candidate[2] - candidate[0] + 1,
+                "column_span": candidate[3] - candidate[1] + 1,
+            }
+            if resolved_width is not None and resolved_height is not None:
+                suggestion["width"] = resolved_width
+                suggestion["height"] = resolved_height
+            suggestions.append(suggestion)
+            reserved_bounds.append(
+                _inflate_bounds(
+                    candidate,
+                    padding_rows=padding_rows,
+                    padding_columns=padding_columns,
+                )
+            )
+            if len(suggestions) >= limit:
+                break
+        if len(suggestions) >= limit:
+            break
+
+    return {
+        "sheet_name": worksheet.title,
+        "origin_cell": origin_cell,
+        "search_window": _bounds_to_range(origin_row, origin_col, max_search_row, max_search_col),
+        "occupancy": {
+            "cell_segments": len(occupied_groups["cells"]),
+            "merged_ranges": len(occupied_groups["merged_ranges"]),
+            "tables": len(occupied_groups["tables"]),
+            "charts": len(occupied_groups["charts"]),
+        },
+        "suggestions": suggestions,
+    }
+
+
 def _placement_reference_bounds(
     workbook: Any,
     worksheet: Any,
@@ -400,6 +662,51 @@ def _resolve_chart_anchor(
     padding_columns = _coerce_padding("padding_columns", 1)
     padding_rows = _coerce_padding("padding_rows", 1)
     relative_to = placement.get("relative_to")
+    if isinstance(relative_to, str) and relative_to.strip().lower() == "free_canvas":
+        search_rows_raw = placement.get("search_rows")
+        search_columns_raw = placement.get("search_columns")
+
+        def _coerce_optional_positive_int(raw_value: Any, name: str) -> Optional[int]:
+            if raw_value is None:
+                return None
+            try:
+                value = int(raw_value)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(f"placement.{name} must be a positive integer") from exc
+            if value <= 0:
+                raise ValidationError(f"placement.{name} must be a positive integer")
+            return value
+
+        search_rows = _coerce_optional_positive_int(search_rows_raw, "search_rows")
+        search_columns = _coerce_optional_positive_int(search_columns_raw, "search_columns")
+        origin_cell = str(placement.get("origin_cell", "A1")).strip() or "A1"
+        free_canvas = _find_free_canvas_slots_in_worksheet(
+            worksheet,
+            width=width,
+            height=height,
+            limit=1,
+            origin_cell=origin_cell,
+            search_rows=search_rows,
+            search_columns=search_columns,
+            padding_rows=padding_rows,
+            padding_columns=padding_columns,
+        )
+        suggestions = free_canvas["suggestions"]
+        if not suggestions:
+            raise ValidationError(
+                "No free canvas slot found inside the requested search window"
+            )
+        suggestion = suggestions[0]
+        return suggestion["anchor_cell"], {
+            "mode": "placement",
+            "direction": "free_canvas",
+            "relative_to": "free_canvas",
+            "padding_columns": padding_columns,
+            "padding_rows": padding_rows,
+            "occupied_range": suggestion["occupied_range"],
+            "search_window": free_canvas["search_window"],
+        }
+
     if relative_to is None:
         resolved_relative_to = "data_range" if data_range else "content"
         try:
@@ -510,6 +817,50 @@ def list_charts(
         raise
     except Exception as e:
         logger.error(f"Failed to list charts: {e}")
+        raise ChartError(str(e))
+
+
+def find_free_canvas_slots(
+    filepath: str,
+    sheet_name: str,
+    *,
+    width: Optional[float] = None,
+    height: Optional[float] = None,
+    min_rows: Optional[int] = None,
+    min_cols: Optional[int] = None,
+    limit: int = 5,
+    origin_cell: str = "A1",
+    search_rows: Optional[int] = None,
+    search_columns: Optional[int] = None,
+    padding_rows: int = 0,
+    padding_columns: int = 0,
+) -> dict[str, Any]:
+    """Suggest free worksheet slots for charts or dashboard blocks."""
+    try:
+        with safe_workbook(filepath) as wb:
+            worksheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=ValidationError,
+                operation="layout inspection",
+            )
+            return _find_free_canvas_slots_in_worksheet(
+                worksheet,
+                width=width,
+                height=height,
+                min_rows=min_rows,
+                min_cols=min_cols,
+                limit=limit,
+                origin_cell=origin_cell,
+                search_rows=search_rows,
+                search_columns=search_columns,
+                padding_rows=padding_rows,
+                padding_columns=padding_columns,
+            )
+    except ValidationError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to find free canvas slots: {e}")
         raise ChartError(str(e))
 
 

@@ -113,14 +113,14 @@ http://127.0.0.1:8017/sse
 
 ## Tooling Overview
 
-The server currently registers 49 MCP tools across these groups:
+The server currently registers 50 MCP tools across these groups:
 
 - workbook overview: `create_workbook`, `create_worksheet`, `get_workbook_metadata`, `profile_workbook`, `list_named_ranges`, `list_all_sheets`, `list_tables`
 - data access: `quick_read`, `read_excel_table`, `read_data_from_excel`, `read_excel_as_table`, `search_in_sheet`, `write_data_to_excel`, `append_table_rows`, `upsert_excel_table_rows`, `update_rows_by_key`
 - worksheet and range changes: `copy_worksheet`, `delete_worksheet`, `rename_worksheet`, `set_worksheet_visibility`, `get_worksheet_protection`, `set_worksheet_protection`, `copy_range`, `delete_range`, `insert_rows`, `insert_columns`, `delete_sheet_rows`, `delete_sheet_columns`
 - formatting and layout: `format_range`, `format_ranges`, `freeze_panes`, `set_autofilter`, `set_print_area`, `set_print_titles`, `set_column_widths`, `autofit_columns`, `set_row_heights`, `merge_cells`, `unmerge_cells`, `get_merged_cells`
 - formulas and validation: `apply_formula`, `validate_formula_syntax`, `validate_excel_range`, `get_data_validation_info`
-- analysis and structure: `create_table`, `list_charts`, `create_chart`, `create_chart_from_series`, `create_pivot_table`
+- analysis and structure: `create_table`, `list_charts`, `find_free_canvas`, `create_chart`, `create_chart_from_series`, `create_pivot_table`
 
 For chart authoring, prefer `create_chart` as the primary entry point:
 
@@ -128,6 +128,7 @@ For chart authoring, prefer `create_chart` as the primary entry point:
 - use explicit `series` plus optional `categories_range` for non-contiguous or hand-authored charts
 - use top-level `width` and `height` to control chart size in centimeters; defaults are `15 x 7.5`
 - use `placement` when you want SheetForge to position the chart relative to worksheet content, a source range, or a named table instead of guessing `target_cell` manually
+- use `placement={"relative_to": "free_canvas"}` when a busy dashboard needs the first non-overlapping chart slot instead of a simple right/below placement rule
 - keep `create_chart_from_series` for backward compatibility or existing prompts that already rely on it
 
 The most agent-friendly read tools are:
@@ -241,6 +242,7 @@ uv build
 - Excel-first MCP surface: the toolset is focused on real `.xlsx` workbook operations, not generic file I/O
 - agent-friendly responses: consistent JSON envelopes, compact writes, and `dry_run` previews reduce context waste
 - workbook introspection: `profile_workbook`, `list_all_sheets`, `list_tables`, and `list_charts` make unfamiliar spreadsheets easier to navigate
+- layout planning: `find_free_canvas` suggests safe empty slots for charts or dashboard blocks before you place them, defaulting to the standard chart footprint when you omit explicit sizing
 - practical Excel output: formatting, print setup, worksheet protection, table upserts, chart authoring, and autofit helpers cover real reporting workflows
 - Python ecosystem fit: built on `openpyxl`, packaged for `uvx`, and easy to run locally over `stdio` or remotely over HTTP
 

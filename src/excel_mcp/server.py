@@ -27,6 +27,7 @@ from excel_mcp.validation import (
 from excel_mcp.chart import (
     create_chart_from_series as create_chart_from_series_impl,
     create_chart_in_sheet as create_chart_impl,
+    find_free_canvas_slots as find_free_canvas_impl,
     list_charts as list_charts_impl,
 )
 from excel_mcp.workbook import (
@@ -799,6 +800,47 @@ def list_charts(filepath: str, sheet_name: Optional[str] = None) -> str:
         return {"charts": list_charts_impl(get_excel_path(filepath), sheet_name=sheet_name)}
 
     return _run_tool("list_charts", action)
+
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Find Free Canvas",
+        readOnlyHint=True,
+    ),
+)
+def find_free_canvas(
+    filepath: str,
+    sheet_name: str,
+    width: Optional[float] = None,
+    height: Optional[float] = None,
+    min_rows: Optional[int] = None,
+    min_cols: Optional[int] = None,
+    limit: int = 5,
+    origin_cell: str = "A1",
+    search_rows: Optional[int] = None,
+    search_columns: Optional[int] = None,
+    padding_rows: int = 0,
+    padding_columns: int = 0,
+) -> str:
+    """Suggest free worksheet slots for charts or dashboard blocks."""
+    def action() -> Any:
+        return find_free_canvas_impl(
+            filepath=get_excel_path(filepath),
+            sheet_name=sheet_name,
+            width=width,
+            height=height,
+            min_rows=min_rows,
+            min_cols=min_cols,
+            limit=limit,
+            origin_cell=origin_cell,
+            search_rows=search_rows,
+            search_columns=search_columns,
+            padding_rows=padding_rows,
+            padding_columns=padding_columns,
+        )
+
+    return _run_tool("find_free_canvas", action)
 
 @mcp.tool(
     structured_output=False,

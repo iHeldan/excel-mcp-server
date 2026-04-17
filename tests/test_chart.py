@@ -4,11 +4,18 @@ import pytest
 from openpyxl import load_workbook
 from openpyxl.utils.cell import range_boundaries
 
-from excel_mcp.chart import ChartType, create_chart_from_series, create_chart_in_sheet, list_charts
+from excel_mcp.chart import (
+    ChartType,
+    create_chart_from_series,
+    create_chart_in_sheet,
+    find_free_canvas_slots,
+    list_charts,
+)
 from excel_mcp.exceptions import ValidationError, ChartError
 from excel_mcp.server import (
     create_chart as create_chart_tool,
     create_chart_from_series as create_chart_from_series_tool,
+    find_free_canvas as find_free_canvas_tool,
     list_charts as list_charts_tool,
 )
 
@@ -19,6 +26,17 @@ def _load_tool_payload(raw: str) -> dict:
     assert "operation" in payload
     assert "message" in payload
     return payload
+
+
+def _ranges_intersect(first: str, second: str) -> bool:
+    first_min_col, first_min_row, first_max_col, first_max_row = range_boundaries(first)
+    second_min_col, second_min_row, second_max_col, second_max_row = range_boundaries(second)
+    return not (
+        first_max_row < second_min_row
+        or second_max_row < first_min_row
+        or first_max_col < second_min_col
+        or second_max_col < first_min_col
+    )
 
 
 @pytest.fixture
@@ -324,6 +342,92 @@ def test_content_placement_accounts_for_existing_chart_footprint(chart_workbook)
     assert second_min_col == first_max_col + 2
 
 
+def test_find_free_canvas_returns_non_overlapping_slots(chart_workbook):
+    existing = create_chart_in_sheet(
+        chart_workbook,
+        "Sales",
+        "A1:B5",
+        "bar",
+        "E1",
+        width=10,
+        height=6,
+    )
+
+    result = find_free_canvas_slots(
+        chart_workbook,
+        "Sales",
+        width=10,
+        height=6,
+        limit=2,
+    )
+
+    suggestions = result["suggestions"]
+    assert len(suggestions) == 2
+    assert result["occupancy"]["charts"] == 1
+    assert not _ranges_intersect(suggestions[0]["occupied_range"], "A1:C5")
+    assert not _ranges_intersect(
+        suggestions[0]["occupied_range"],
+        existing["details"]["occupied_range"],
+    )
+    assert not _ranges_intersect(
+        suggestions[0]["occupied_range"],
+        suggestions[1]["occupied_range"],
+    )
+
+
+def test_find_free_canvas_defaults_to_chart_dimensions(chart_workbook):
+    result = find_free_canvas_slots(chart_workbook, "Sales", limit=1)
+
+    suggestion = result["suggestions"][0]
+    assert suggestion["width"] == 15
+    assert suggestion["height"] == 7.5
+
+
+def test_find_free_canvas_can_scan_cell_grid_blocks(chart_workbook):
+    result = find_free_canvas_slots(
+        chart_workbook,
+        "Sales",
+        min_rows=2,
+        min_cols=2,
+        limit=1,
+    )
+
+    suggestion = result["suggestions"][0]
+    assert suggestion["occupied_range"] == "D1:E2"
+    assert suggestion["row_span"] == 2
+    assert suggestion["column_span"] == 2
+
+
+def test_create_chart_can_auto_place_into_free_canvas_gap(chart_workbook):
+    existing = create_chart_in_sheet(
+        chart_workbook,
+        "Sales",
+        "A1:B5",
+        "bar",
+        "E1",
+        width=10,
+        height=6,
+    )
+
+    result = create_chart_in_sheet(
+        chart_workbook,
+        "Sales",
+        "A1:C5",
+        "line",
+        width=10,
+        height=6,
+        placement={"relative_to": "free_canvas", "padding_columns": 1, "padding_rows": 1},
+    )
+
+    assert result["details"]["placement"]["relative_to"] == "free_canvas"
+    assert "search_window" in result["details"]["placement"]
+    assert not _ranges_intersect(result["details"]["occupied_range"], "A1:C5")
+    assert not _ranges_intersect(
+        result["details"]["occupied_range"],
+        existing["details"]["occupied_range"],
+    )
+
+
 def test_default_placement_falls_back_to_target_sheet_content_for_cross_sheet_data(chart_workbook):
     wb = load_workbook(chart_workbook)
     source = wb.create_sheet("Source")
@@ -417,6 +521,17 @@ def test_list_charts_tool_returns_json_envelope(chart_workbook):
 
     assert payload["operation"] == "list_charts"
     assert payload["data"]["charts"][0]["title"] == "Revenue"
+
+
+def test_find_free_canvas_tool_returns_json_envelope(chart_workbook):
+    create_chart_in_sheet(chart_workbook, "Sales", "A1:B5", "bar", "E1", width=10, height=6)
+
+    payload = _load_tool_payload(
+        find_free_canvas_tool(chart_workbook, "Sales", width=10, height=6, limit=2)
+    )
+
+    assert payload["operation"] == "find_free_canvas"
+    assert len(payload["data"]["suggestions"]) == 2
 
 
 def test_create_chart_from_series_tool_returns_json_envelope(chart_workbook):

@@ -58,6 +58,7 @@
     {"name": "apply_formula", "description": "Apply Excel formula to cell"},
     {"name": "validate_formula_syntax", "description": "Validate Excel formula syntax"},
     {"name": "list_charts", "description": "List embedded charts in a workbook or worksheet"},
+    {"name": "find_free_canvas", "description": "Suggest non-overlapping worksheet slots for charts or dashboard blocks"},
     {"name": "create_chart", "description": "Create chart from a contiguous range or explicit series definitions"},
     {"name": "create_chart_from_series", "description": "Create chart from explicit series ranges, including non-contiguous data"},
     {"name": "create_pivot_table", "description": "Create a pivot-style summary with row and optional column grouping"},
