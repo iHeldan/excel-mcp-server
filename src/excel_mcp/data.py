@@ -1,5 +1,7 @@
+import base64
 from datetime import date, datetime, time
 from decimal import Decimal
+import json
 from pathlib import Path
 import logging
 import re
@@ -16,6 +18,7 @@ from .workbook import first_worksheet, require_worksheet, safe_workbook
 
 logger = logging.getLogger(__name__)
 ROW_MODES = {"arrays", "objects"}
+RANGE_READ_CURSOR_VERSION = 1
 
 
 def _cell_address(row: int, col: int) -> str:
@@ -224,6 +227,89 @@ def _column_index(label: str, *, argument_name: str) -> int:
         return column_index_from_string(label.upper())
     except ValueError as exc:
         raise DataError(f"{argument_name} must be a valid Excel column label") from exc
+
+
+def _encode_range_read_cursor(
+    *,
+    start_cell: str,
+    end_cell: str,
+    max_rows: Optional[int],
+    max_cols: Optional[int],
+) -> str:
+    payload: Dict[str, Any] = {
+        "v": RANGE_READ_CURSOR_VERSION,
+        "start_cell": start_cell,
+        "end_cell": end_cell,
+    }
+    if max_rows is not None:
+        payload["max_rows"] = max_rows
+    if max_cols is not None:
+        payload["max_cols"] = max_cols
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).decode("ascii")
+    return encoded.rstrip("=")
+
+
+def _decode_range_read_cursor(cursor: str) -> Dict[str, Any]:
+    if not cursor:
+        raise DataError("cursor must not be empty")
+
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        payload = json.loads(decoded)
+    except Exception as exc:
+        raise DataError("Invalid cursor") from exc
+
+    if not isinstance(payload, dict):
+        raise DataError("Invalid cursor")
+    if payload.get("v") != RANGE_READ_CURSOR_VERSION:
+        raise DataError("Unsupported cursor version")
+
+    start_cell = payload.get("start_cell")
+    end_cell = payload.get("end_cell")
+    if not isinstance(start_cell, str) or not start_cell.strip():
+        raise DataError("Invalid cursor")
+    if not isinstance(end_cell, str) or not end_cell.strip():
+        raise DataError("Invalid cursor")
+
+    max_rows = payload.get("max_rows")
+    max_cols = payload.get("max_cols")
+    if max_rows is not None and (not isinstance(max_rows, int) or max_rows <= 0):
+        raise DataError("Invalid cursor")
+    if max_cols is not None and (not isinstance(max_cols, int) or max_cols <= 0):
+        raise DataError("Invalid cursor")
+
+    return {
+        "start_cell": start_cell,
+        "end_cell": end_cell,
+        "max_rows": max_rows,
+        "max_cols": max_cols,
+    }
+
+
+def _build_range_continuation(
+    *,
+    start_row: int,
+    start_col: int,
+    requested_end_row: int,
+    requested_end_col: int,
+    max_rows: Optional[int],
+    max_cols: Optional[int],
+) -> Dict[str, Any]:
+    start_cell = _cell_address(start_row, start_col)
+    end_cell = _cell_address(requested_end_row, requested_end_col)
+    return {
+        "cursor": _encode_range_read_cursor(
+            start_cell=start_cell,
+            end_cell=end_cell,
+            max_rows=max_rows,
+            max_cols=max_cols,
+        ),
+        "start_cell": start_cell,
+        "end_cell": end_cell,
+    }
 
 def read_excel_range(
     filepath: Path | str,
@@ -439,6 +525,7 @@ def read_excel_range_with_metadata(
     end_cell: Optional[str] = None,
     max_rows: Optional[int] = None,
     max_cols: Optional[int] = None,
+    cursor: Optional[str] = None,
     include_validation: bool = True,
     compact: bool = False,
     values_only: bool = False,
@@ -456,6 +543,15 @@ def read_excel_range_with_metadata(
         Dictionary containing structured cell data with metadata
     """
     try:
+        if cursor is not None:
+            cursor_state = _decode_range_read_cursor(cursor)
+            start_cell = cursor_state["start_cell"]
+            end_cell = cursor_state["end_cell"]
+            if max_rows is None:
+                max_rows = cursor_state["max_rows"]
+            if max_cols is None:
+                max_cols = cursor_state["max_cols"]
+
         if max_rows is not None and max_rows <= 0:
             raise DataError("max_rows must be a positive integer")
         if max_cols is not None and max_cols <= 0:
@@ -541,6 +637,30 @@ def read_excel_range_with_metadata(
                 next_start_col = end_col + 1
                 range_data["next_start_col"] = get_column_letter(next_start_col)
                 range_data["next_column_start_cell"] = f"{get_column_letter(next_start_col)}{start_row}"
+
+            continuations: Dict[str, Dict[str, Any]] = {}
+            if truncated_rows:
+                continuations["down"] = _build_range_continuation(
+                    start_row=end_row + 1,
+                    start_col=start_col,
+                    requested_end_row=requested_end_row,
+                    requested_end_col=requested_end_col,
+                    max_rows=max_rows,
+                    max_cols=max_cols,
+                )
+            if truncated_cols:
+                continuations["right"] = _build_range_continuation(
+                    start_row=start_row,
+                    start_col=end_col + 1,
+                    requested_end_row=requested_end_row,
+                    requested_end_col=requested_end_col,
+                    max_rows=max_rows,
+                    max_cols=max_cols,
+                )
+            if continuations:
+                range_data["continuations"] = continuations
+                if len(continuations) == 1:
+                    range_data["next_cursor"] = next(iter(continuations.values()))["cursor"]
 
             if values_only:
                 values: List[List[Any]] = []

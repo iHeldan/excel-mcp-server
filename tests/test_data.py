@@ -414,18 +414,17 @@ def test_read_excel_range_with_metadata_values_only_supports_row_pagination(tmp_
         values_only=True,
     )
 
-    assert result == {
-        "range": "A1:B2",
-        "sheet_name": "Sheet1",
-        "total_rows": 6,
-        "truncated": True,
-        "next_start_row": 3,
-        "next_start_cell": "A3",
-        "values": [
-            ["Name", "Age"],
-            ["Alice", 30],
-        ],
-    }
+    assert result["range"] == "A1:B2"
+    assert result["sheet_name"] == "Sheet1"
+    assert result["total_rows"] == 6
+    assert result["truncated"] is True
+    assert result["next_start_row"] == 3
+    assert result["next_start_cell"] == "A3"
+    assert result["next_cursor"] == result["continuations"]["down"]["cursor"]
+    assert result["values"] == [
+        ["Name", "Age"],
+        ["Alice", 30],
+    ]
 
 
 def test_read_excel_range_with_metadata_values_only_supports_column_pagination(tmp_workbook):
@@ -438,22 +437,21 @@ def test_read_excel_range_with_metadata_values_only_supports_column_pagination(t
         values_only=True,
     )
 
-    assert result == {
-        "range": "A1:B6",
-        "sheet_name": "Sheet1",
-        "total_cols": 3,
-        "truncated": True,
-        "next_start_col": "C",
-        "next_column_start_cell": "C1",
-        "values": [
-            ["Name", "Age"],
-            ["Alice", 30],
-            ["Bob", 25],
-            ["Carol", 35],
-            ["Dave", 28],
-            ["Eve", 32],
-        ],
-    }
+    assert result["range"] == "A1:B6"
+    assert result["sheet_name"] == "Sheet1"
+    assert result["total_cols"] == 3
+    assert result["truncated"] is True
+    assert result["next_start_col"] == "C"
+    assert result["next_column_start_cell"] == "C1"
+    assert result["next_cursor"] == result["continuations"]["right"]["cursor"]
+    assert result["values"] == [
+        ["Name", "Age"],
+        ["Alice", 30],
+        ["Bob", 25],
+        ["Carol", 35],
+        ["Dave", 28],
+        ["Eve", 32],
+    ]
 
 
 def test_read_data_from_excel_values_only_preview_limits_rows(tmp_path):
@@ -494,6 +492,7 @@ def test_read_data_from_excel_supports_row_pagination(tmp_workbook):
     assert payload["data"]["truncated"] is True
     assert payload["data"]["next_start_row"] == 3
     assert payload["data"]["next_start_cell"] == "A3"
+    assert payload["data"]["next_cursor"] == payload["data"]["continuations"]["down"]["cursor"]
     assert [cell["address"] for cell in payload["data"]["cells"]] == ["A1", "B1", "A2", "B2"]
 
 
@@ -513,6 +512,7 @@ def test_read_data_from_excel_supports_column_pagination(tmp_workbook):
     assert payload["data"]["truncated"] is True
     assert payload["data"]["next_start_col"] == "C"
     assert payload["data"]["next_column_start_cell"] == "C1"
+    assert payload["data"]["next_cursor"] == payload["data"]["continuations"]["right"]["cursor"]
     assert [cell["address"] for cell in payload["data"]["cells"][:4]] == ["A1", "B1", "A2", "B2"]
 
 
@@ -529,21 +529,102 @@ def test_read_data_from_excel_supports_2d_pagination(tmp_workbook):
         )
     )
 
-    assert payload["data"] == {
-        "range": "A1:B2",
-        "sheet_name": "Sheet1",
-        "total_rows": 6,
-        "total_cols": 3,
-        "truncated": True,
-        "next_start_row": 3,
-        "next_start_cell": "A3",
-        "next_start_col": "C",
-        "next_column_start_cell": "C1",
-        "values": [
-            ["Name", "Age"],
-            ["Alice", 30],
-        ],
-    }
+    assert payload["data"]["range"] == "A1:B2"
+    assert payload["data"]["sheet_name"] == "Sheet1"
+    assert payload["data"]["total_rows"] == 6
+    assert payload["data"]["total_cols"] == 3
+    assert payload["data"]["truncated"] is True
+    assert payload["data"]["next_start_row"] == 3
+    assert payload["data"]["next_start_cell"] == "A3"
+    assert payload["data"]["next_start_col"] == "C"
+    assert payload["data"]["next_column_start_cell"] == "C1"
+    assert payload["data"]["values"] == [
+        ["Name", "Age"],
+        ["Alice", 30],
+    ]
+    assert set(payload["data"]["continuations"]) == {"down", "right"}
+    assert "next_cursor" not in payload["data"]
+
+
+def test_read_excel_range_with_metadata_cursor_resumes_downward_page(tmp_workbook):
+    first_page = read_excel_range_with_metadata(
+        tmp_workbook,
+        "Sheet1",
+        start_cell="A1",
+        end_cell="B6",
+        max_rows=2,
+        values_only=True,
+    )
+
+    second_page = read_excel_range_with_metadata(
+        tmp_workbook,
+        "Sheet1",
+        cursor=first_page["continuations"]["down"]["cursor"],
+        values_only=True,
+    )
+
+    assert second_page["range"] == "A3:B4"
+    assert second_page["sheet_name"] == "Sheet1"
+    assert second_page["total_rows"] == 4
+    assert second_page["truncated"] is True
+    assert second_page["next_start_row"] == 5
+    assert second_page["next_start_cell"] == "A5"
+    assert second_page["values"] == [
+        ["Bob", 25],
+        ["Carol", 35],
+    ]
+    assert set(second_page["continuations"]) == {"down"}
+    assert second_page["next_cursor"] == second_page["continuations"]["down"]["cursor"]
+
+
+def test_read_data_from_excel_cursor_resumes_rightward_window(tmp_workbook):
+    first_page = _load_tool_payload(
+        read_data_from_excel(
+            tmp_workbook,
+            "Sheet1",
+            start_cell="A1",
+            end_cell="C6",
+            max_rows=2,
+            max_cols=2,
+            values_only=True,
+        )
+    )
+
+    right_page = _load_tool_payload(
+        read_data_from_excel(
+            tmp_workbook,
+            "Sheet1",
+            cursor=first_page["data"]["continuations"]["right"]["cursor"],
+            values_only=True,
+        )
+    )
+
+    assert right_page["data"]["range"] == "C1:C2"
+    assert right_page["data"]["sheet_name"] == "Sheet1"
+    assert right_page["data"]["total_rows"] == 6
+    assert right_page["data"]["total_cols"] == 1
+    assert right_page["data"]["truncated"] is True
+    assert right_page["data"]["next_start_row"] == 3
+    assert right_page["data"]["next_start_cell"] == "C3"
+    assert right_page["data"]["values"] == [
+        ["City"],
+        ["Helsinki"],
+    ]
+    assert set(right_page["data"]["continuations"]) == {"down"}
+    assert right_page["data"]["next_cursor"] == right_page["data"]["continuations"]["down"]["cursor"]
+
+
+def test_read_data_from_excel_rejects_invalid_cursor(tmp_workbook):
+    payload = json.loads(
+        read_data_from_excel(
+            tmp_workbook,
+            "Sheet1",
+            cursor="definitely-not-a-valid-cursor",
+        )
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"]["message"] == "Invalid cursor"
 
 
 def test_read_data_from_excel_values_only_supports_row_pagination(tmp_workbook):
@@ -563,6 +644,7 @@ def test_read_data_from_excel_values_only_supports_row_pagination(tmp_workbook):
     assert payload["data"]["truncated"] is True
     assert payload["data"]["next_start_row"] == 3
     assert payload["data"]["next_start_cell"] == "A3"
+    assert payload["data"]["next_cursor"] == payload["data"]["continuations"]["down"]["cursor"]
     assert payload["data"]["values"] == [
         ["Name", "Age"],
         ["Alice", 30],

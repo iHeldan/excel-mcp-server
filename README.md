@@ -260,6 +260,7 @@ uv build
 - `read_data_from_excel(..., values_only=True)` returns a plain 2D `values` array for range reads that do not need per-cell addresses or validation metadata.
 - `read_data_from_excel(..., max_rows=...)` paginates tall rectangular ranges and returns `next_start_row` plus `next_start_cell` when more rows remain.
 - `read_data_from_excel(..., max_cols=...)` paginates wide rectangular ranges and returns `next_start_col` plus `next_column_start_cell` when more columns remain.
+- `read_data_from_excel(..., cursor=...)` resumes from a continuation token so agents can keep paging without recomputing the next window manually; 2D windows expose directional continuations under `continuations.down` and `continuations.right`
 - `read_excel_as_table(..., compact=True)` returns only `headers` and `rows` unless truncation metadata is needed.
 - `quick_read(..., start_row=...)` and `read_excel_as_table(..., start_row=...)` let agents paginate deep worksheets without first reading from the top.
 - `quick_read(..., start_col=..., end_col=...)` and `read_excel_as_table(..., start_col=..., end_col=...)` let agents request only the relevant columns from wide worksheets instead of pulling every column into context.

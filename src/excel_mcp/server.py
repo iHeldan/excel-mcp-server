@@ -435,6 +435,7 @@ def read_data_from_excel(
     end_cell: Optional[str] = None,
     max_rows: Optional[int] = None,
     max_cols: Optional[int] = None,
+    cursor: Optional[str] = None,
     preview_only: bool = False,
     compact: bool = False,
     values_only: bool = False,
@@ -449,6 +450,7 @@ def read_data_from_excel(
         end_cell: Ending cell (optional, auto-expands if not provided)
         max_rows: Optional maximum number of rows to return from the starting row
         max_cols: Optional maximum number of columns to return from the starting column
+        cursor: Optional continuation token returned by an earlier range read
         preview_only: Whether to return preview only
         compact: Whether to omit default validation metadata for smaller responses
         values_only: Whether to return a 2D value grid without per-cell metadata
@@ -475,6 +477,7 @@ def read_data_from_excel(
             end_cell,
             max_rows=effective_max_rows,
             max_cols=max_cols,
+            cursor=cursor,
             compact=compact,
             values_only=values_only,
         )

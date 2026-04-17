@@ -129,6 +129,8 @@ If `max_rows` is set, the payload is paged by row count and may include `total_r
 
 If `max_cols` is set, the payload is paged by column count and may include `total_cols`, `truncated`, `next_start_col`, and `next_column_start_cell`.
 
+If the payload is truncated, `data.continuations` includes cursor tokens for the available continuation directions. Single-direction truncation also returns `next_cursor` for convenience.
+
 If `compact=True`, cells without real validation rules omit the default `validation: {"has_validation": false}` stub.
 
 If `values_only=True`, the payload returns `data.values` as a plain 2D array instead of `data.cells`, which is much smaller for large range reads that do not need per-cell metadata.
@@ -186,8 +188,8 @@ Returns matches under `data.matches`:
 
 - `write_data_to_excel(filepath: str, sheet_name: str, data: List[List], start_cell: str = "A1", dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
   Writes tabular data starting at the given cell. Missing target sheets are created automatically. Returns compact summaries by default on committed writes, and detailed `changes` during previews unless explicitly disabled.
-- `read_data_from_excel(filepath: str, sheet_name: str, start_cell: str = "A1", end_cell: Optional[str] = None, max_rows: Optional[int] = None, max_cols: Optional[int] = None, preview_only: bool = False, compact: bool = False, values_only: bool = False) -> str`
-  Returns cell range data with row, column, address, value, and validation metadata under the shared envelope, or a plain 2D `values` matrix when `values_only=True`. Use `max_rows` to paginate tall rectangular ranges and `max_cols` to paginate wide ranges without manually recomputing the full rectangle. Continue downward from `next_start_row` / `next_start_cell` or rightward from `next_start_col` / `next_column_start_cell` when the response is truncated.
+- `read_data_from_excel(filepath: str, sheet_name: str, start_cell: str = "A1", end_cell: Optional[str] = None, max_rows: Optional[int] = None, max_cols: Optional[int] = None, cursor: Optional[str] = None, preview_only: bool = False, compact: bool = False, values_only: bool = False) -> str`
+  Returns cell range data with row, column, address, value, and validation metadata under the shared envelope, or a plain 2D `values` matrix when `values_only=True`. Use `max_rows` to paginate tall rectangular ranges and `max_cols` to paginate wide ranges without manually recomputing the full rectangle. Follow-up pages can either use the explicit `next_start_row` / `next_start_cell` and `next_start_col` / `next_column_start_cell` fields or pass `cursor=...` from `continuations.down` / `continuations.right`.
 - `read_excel_as_table(filepath: str, sheet_name: str, header_row: int = 1, start_row: Optional[int] = None, start_col: str = "A", end_col: Optional[str] = None, max_rows: Optional[int] = None, compact: bool = False, include_headers: bool = True, row_mode: str = "arrays", infer_schema: bool = False) -> str`
   Returns `headers`, `rows`, `total_rows`, `truncated`, and `sheet_name`. Use `start_row` plus `max_rows` to paginate into deeper worksheet sections without reading from the top first, `start_col` / `end_col` to limit the width of wide sheets, and `include_headers=False` on follow-up pages after the first. When more rows remain, the response includes `next_start_row` for the next page.
 - `quick_read(filepath: str, sheet_name: Optional[str] = None, header_row: int = 1, start_row: Optional[int] = None, start_col: str = "A", end_col: Optional[str] = None, max_rows: Optional[int] = None, include_headers: bool = True, row_mode: str = "arrays", infer_schema: bool = False) -> str`
