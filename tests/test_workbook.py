@@ -16,6 +16,7 @@ from excel_mcp.workbook import (
     analyze_range_impact,
     get_or_create_workbook,
     get_workbook_info,
+    list_named_ranges,
     list_sheets,
     profile_workbook,
 )
@@ -188,6 +189,7 @@ def test_analyze_range_impact_reports_overlapping_structures(tmp_workbook):
     ws["H2"] = "=SUM(B2:C3)"
     dependent_sheet = workbook.create_sheet("Dependent")
     dependent_sheet["A1"] = "=SUM(Sheet1!B2:C3)"
+    dependent_sheet["B1"] = "=SUM(ImpactArea)"
     workbook.defined_names["ImpactArea"] = DefinedName(
         "ImpactArea",
         attr_text="Sheet1!$B$2:$F$4",
@@ -203,7 +205,7 @@ def test_analyze_range_impact_reports_overlapping_structures(tmp_workbook):
     assert result["summary"]["merged_range_count"] == 1
     assert result["summary"]["named_range_count"] == 1
     assert result["summary"]["formula_cell_count"] == 1
-    assert result["summary"]["dependent_formula_count"] == 2
+    assert result["summary"]["dependent_formula_count"] == 3
     assert result["summary"]["autofilter_overlap"] is True
     assert result["summary"]["print_area_overlap"] is True
     assert result["tables"][0]["covers_header"] is True
@@ -211,12 +213,19 @@ def test_analyze_range_impact_reports_overlapping_structures(tmp_workbook):
     assert result["merged_ranges"][0]["range"] == "B2:C2"
     assert result["named_ranges"][0]["name"] == "ImpactArea"
     assert result["formula_cells"]["sample"] == ["D3"]
-    assert result["dependent_formulas"]["count"] == 2
-    assert result["dependent_formulas"]["sample"][0]["references"][0]["intersection_range"] == "B2:C3"
+    assert result["dependent_formulas"]["count"] == 3
     dependent_cells = {
         (item["sheet_name"], item["cell"]) for item in result["dependent_formulas"]["sample"]
     }
-    assert dependent_cells == {("Sheet1", "H2"), ("Dependent", "A1")}
+    assert dependent_cells == {("Sheet1", "H2"), ("Dependent", "A1"), ("Dependent", "B1")}
+    named_range_reference = next(
+        reference
+        for item in result["dependent_formulas"]["sample"]
+        if item["cell"] == "B1"
+        for reference in item["references"]
+        if reference.get("via_named_range") == "ImpactArea"
+    )
+    assert named_range_reference["intersection_range"] == "B2:F4"
 
 
 def test_analyze_range_impact_reports_low_risk_for_empty_area(tmp_workbook):
@@ -227,6 +236,69 @@ def test_analyze_range_impact_reports_low_risk_for_empty_area(tmp_workbook):
     assert result["summary"]["chart_count"] == 0
     assert result["summary"]["dependent_formula_count"] == 0
     assert result["hints"] == ["No overlapping workbook structures detected for this range."]
+
+
+def test_analyze_range_impact_tracks_local_named_range_dependencies(tmp_workbook):
+    workbook = load_workbook(tmp_workbook)
+    ws = workbook["Sheet1"]
+    ws["D1"] = "=SUM(LocalImpact)"
+    ws.defined_names.add(
+        DefinedName(
+            "LocalImpact",
+            attr_text="Sheet1!$B$2:$B$4",
+        )
+    )
+    workbook.save(tmp_workbook)
+    workbook.close()
+
+    result = analyze_range_impact(tmp_workbook, "Sheet1", "B2:B4")
+
+    assert result["summary"]["dependent_formula_count"] == 1
+    dependency = result["dependent_formulas"]["sample"][0]
+    assert dependency["cell"] == "D1"
+    assert dependency["sheet_name"] == "Sheet1"
+    assert dependency["references"][0]["via_named_range"] == "LocalImpact"
+    assert dependency["references"][0]["intersection_range"] == "B2:B4"
+
+
+def test_list_named_ranges_includes_local_and_workbook_scope(tmp_workbook):
+    workbook = load_workbook(tmp_workbook)
+    ws = workbook["Sheet1"]
+    ws.defined_names.add(DefinedName("LocalImpact", attr_text="Sheet1!$B$2:$B$4"))
+    workbook.defined_names["GlobalImpact"] = DefinedName(
+        "GlobalImpact",
+        attr_text="Sheet1!$A$1:$A$2",
+    )
+    workbook.save(tmp_workbook)
+    workbook.close()
+
+    result = list_named_ranges(tmp_workbook)
+    scopes = {(item["name"], item["local_sheet"]) for item in result}
+
+    assert ("LocalImpact", "Sheet1") in scopes
+    assert ("GlobalImpact", None) in scopes
+
+
+def test_analyze_range_impact_prefers_same_sheet_local_named_range_over_workbook_scope(tmp_workbook):
+    workbook = load_workbook(tmp_workbook)
+    ws = workbook["Sheet1"]
+    ws["D1"] = "=SUM(ScopedImpact)"
+    ws.defined_names.add(DefinedName("ScopedImpact", attr_text="Sheet1!$B$2:$B$4"))
+    workbook.defined_names["ScopedImpact"] = DefinedName(
+        "ScopedImpact",
+        attr_text="Sheet1!$A$1:$A$2",
+    )
+    workbook.save(tmp_workbook)
+    workbook.close()
+
+    local_result = analyze_range_impact(tmp_workbook, "Sheet1", "B2:B4")
+    global_result = analyze_range_impact(tmp_workbook, "Sheet1", "A1:A2")
+
+    assert local_result["summary"]["dependent_formula_count"] == 1
+    assert global_result["summary"]["dependent_formula_count"] == 0
+    local_reference = local_result["dependent_formulas"]["sample"][0]["references"][0]
+    assert local_reference["via_named_range"] == "ScopedImpact"
+    assert local_reference["intersection_range"] == "B2:B4"
 
 
 def test_analyze_range_impact_tool_returns_json_envelope(tmp_workbook):

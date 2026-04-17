@@ -8,6 +8,7 @@
 - Added `find_free_canvas` plus `placement.relative_to="free_canvas"` so chart and dashboard workflows can discover non-overlapping layout slots automatically.
 - Added `analyze_range_impact` as a read-only preflight that reports tables, chart footprints, merges, named ranges, autofilter, print area, and formulas touched by a worksheet range.
 - Extended `analyze_range_impact` to report downstream formulas elsewhere in the workbook that reference the selected range.
+- Extended `analyze_range_impact` again to catch downstream formula dependencies that reach the selected range through named ranges.
 
 ## 0.4.2 - 2026-04-11
 

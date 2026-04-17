@@ -150,6 +150,180 @@ def _cell_is_within_bounds(
     )
 
 
+def _defined_name_local_sheet(
+    wb: Any,
+    defined_name: Any,
+) -> str | None:
+    local_sheet_id = getattr(defined_name, "localSheetId", None)
+    if local_sheet_id is None:
+        return None
+    try:
+        return wb.sheetnames[local_sheet_id]
+    except Exception:
+        return None
+
+
+def _iter_defined_name_entries(wb: Any):
+    seen: set[tuple[str, str | None]] = set()
+
+    for name, defined_name in wb.defined_names.items():
+        local_sheet = _defined_name_local_sheet(wb, defined_name)
+        entry_key = (name, local_sheet)
+        if entry_key in seen:
+            continue
+        seen.add(entry_key)
+        yield name, defined_name, local_sheet
+
+    for ws in getattr(wb, "worksheets", []):
+        for name, defined_name in ws.defined_names.items():
+            entry_key = (name, ws.title)
+            if entry_key in seen:
+                continue
+            seen.add(entry_key)
+            yield name, defined_name, ws.title
+
+
+def _resolve_defined_name(
+    wb: Any,
+    *,
+    name: str,
+    formula_sheet_name: str,
+    scope_sheet_name: str | None = None,
+) -> tuple[Any, str | None] | None:
+    if scope_sheet_name is not None and scope_sheet_name in wb.sheetnames:
+        scoped_ws = wb[scope_sheet_name]
+        scoped_name = scoped_ws.defined_names.get(name)
+        if scoped_name is not None:
+            return scoped_name, scope_sheet_name
+
+    if scope_sheet_name is not None:
+        scoped_name = wb.defined_names.get(name)
+        if scoped_name is None:
+            return None
+        local_sheet = _defined_name_local_sheet(wb, scoped_name)
+        if local_sheet != scope_sheet_name:
+            return None
+        return scoped_name, local_sheet
+
+    if formula_sheet_name in wb.sheetnames:
+        local_ws = wb[formula_sheet_name]
+        local_name = local_ws.defined_names.get(name)
+        if local_name is not None:
+            return local_name, formula_sheet_name
+
+    workbook_name = wb.defined_names.get(name)
+    if workbook_name is None:
+        return None
+
+    local_sheet = _defined_name_local_sheet(wb, workbook_name)
+    if local_sheet is not None and local_sheet != formula_sheet_name:
+        return None
+
+    return workbook_name, local_sheet
+
+
+def _resolve_named_range_references(
+    wb: Any,
+    *,
+    name: str,
+    formula_sheet_name: str,
+    target_sheet: str,
+    target_bounds: tuple[int, int, int, int],
+    scope_sheet_name: str | None = None,
+) -> list[dict[str, Any]]:
+    resolved = _resolve_defined_name(
+        wb,
+        name=name,
+        formula_sheet_name=formula_sheet_name,
+        scope_sheet_name=scope_sheet_name,
+    )
+    if resolved is None:
+        return []
+
+    defined_name, _ = resolved
+
+    matches: list[dict[str, Any]] = []
+    try:
+        destinations = list(defined_name.destinations)
+    except Exception:
+        destinations = []
+
+    for destination_sheet_name, destination_range in destinations:
+        if destination_sheet_name != target_sheet or destination_sheet_name not in wb.sheetnames:
+            continue
+
+        destination_ws = wb[destination_sheet_name]
+        if _sheet_type(destination_ws) == "chartsheet":
+            continue
+
+        for destination_bounds, destination_ref in _iter_range_references(
+            destination_range,
+            worksheet=destination_ws,
+            expected_sheet=target_sheet,
+        ):
+            intersection = _intersection_bounds(target_bounds, destination_bounds)
+            if intersection is None:
+                continue
+            matches.append(
+                {
+                    "reference": f"{destination_sheet_name}!{destination_ref}",
+                    "intersection_range": _bounds_to_range(*intersection),
+                    "via_named_range": defined_name.name,
+                }
+            )
+
+    return matches
+
+
+def _resolve_formula_token_references(
+    wb: Any,
+    *,
+    token_value: str,
+    formula_sheet_name: str,
+    target_sheet: str,
+    target_bounds: tuple[int, int, int, int],
+) -> list[dict[str, Any]]:
+    reference_scope_sheet = None
+    local_reference = token_value
+    if "!" in token_value:
+        range_sheet, local_reference = token_value.rsplit("!", 1)
+        reference_scope_sheet = range_sheet.strip().strip("'")
+
+    reference_sheet_name = formula_sheet_name if reference_scope_sheet is None else reference_scope_sheet
+    if reference_sheet_name == target_sheet and reference_sheet_name in wb.sheetnames:
+        reference_ws = wb[reference_sheet_name]
+        if _sheet_type(reference_ws) != "chartsheet":
+            try:
+                reference_bounds, normalized_reference = _parse_range_reference(
+                    local_reference,
+                    worksheet=reference_ws,
+                    error_cls=WorkbookError,
+                )
+            except WorkbookError:
+                pass
+            else:
+                intersection = _intersection_bounds(target_bounds, reference_bounds)
+                if intersection is not None:
+                    return [
+                        {
+                            "reference": f"{reference_sheet_name}!{normalized_reference}",
+                            "intersection_range": _bounds_to_range(*intersection),
+                        }
+                    ]
+
+    if "[" in local_reference:
+        return []
+
+    return _resolve_named_range_references(
+        wb,
+        name=local_reference,
+        formula_sheet_name=formula_sheet_name,
+        target_sheet=target_sheet,
+        target_bounds=target_bounds,
+        scope_sheet_name=reference_scope_sheet,
+    )
+
+
 def _extract_formula_dependencies(
     wb: Any,
     *,
@@ -187,40 +361,16 @@ def _extract_formula_dependencies(
                         continue
 
                     token_value = str(token.value).strip()
-                    if not token_value or "[" in token_value:
+                    if not token_value:
                         continue
-
-                    reference_sheet_name = formula_sheet_name
-                    local_reference = token_value
-                    if "!" in token_value:
-                        range_sheet, local_reference = token_value.rsplit("!", 1)
-                        reference_sheet_name = range_sheet.strip().strip("'")
-
-                    if reference_sheet_name != target_sheet or reference_sheet_name not in wb.sheetnames:
-                        continue
-
-                    reference_ws = wb[reference_sheet_name]
-                    if _sheet_type(reference_ws) == "chartsheet":
-                        continue
-
-                    try:
-                        reference_bounds, normalized_reference = _parse_range_reference(
-                            local_reference,
-                            worksheet=reference_ws,
-                            error_cls=WorkbookError,
+                    matched_references.extend(
+                        _resolve_formula_token_references(
+                            wb,
+                            token_value=token_value,
+                            formula_sheet_name=formula_sheet_name,
+                            target_sheet=target_sheet,
+                            target_bounds=target_bounds,
                         )
-                    except WorkbookError:
-                        continue
-
-                    intersection = _intersection_bounds(target_bounds, reference_bounds)
-                    if intersection is None:
-                        continue
-
-                    matched_references.append(
-                        {
-                            "reference": f"{reference_sheet_name}!{normalized_reference}",
-                            "intersection_range": _bounds_to_range(*intersection),
-                        }
                     )
 
                 if matched_references:
@@ -285,7 +435,7 @@ def first_worksheet(
 
 def _serialize_named_ranges(wb: Any) -> list[dict[str, Any]]:
     ranges = []
-    for name, defined_name in wb.defined_names.items():
+    for name, defined_name, local_sheet in _iter_defined_name_entries(wb):
         destinations = []
         try:
             destinations = [
@@ -297,13 +447,6 @@ def _serialize_named_ranges(wb: Any) -> list[dict[str, Any]]:
             ]
         except Exception:
             destinations = []
-
-        local_sheet = None
-        if defined_name.localSheetId is not None:
-            try:
-                local_sheet = wb.sheetnames[defined_name.localSheetId]
-            except Exception:
-                local_sheet = None
 
         ranges.append(
             {
@@ -715,6 +858,7 @@ def analyze_range_impact(filepath: str, sheet_name: str, range_ref: str) -> dict
                         continue
                     for destination_bounds, destination_ref in _iter_range_references(
                         destination["range"],
+                        worksheet=ws,
                         expected_sheet=sheet_name,
                     ):
                         intersection = _intersection_bounds(target_bounds, destination_bounds)
