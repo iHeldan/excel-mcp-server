@@ -1,12 +1,13 @@
 # SheetForge MCP
 
-SheetForge MCP is an Excel MCP server for `.xlsx` automation over the Model Context Protocol. It lets AI agents, MCP clients, and automation workflows read, write, search, format, chart, and restructure Excel workbooks with Python and `openpyxl`, without launching Microsoft Excel or LibreOffice.
+SheetForge MCP is an Excel MCP server for `.xlsx` automation over the Model Context Protocol. It helps AI agents, MCP clients, and automation workflows read, write, search, format, chart, validate, and restructure Excel workbooks with Python and `openpyxl`, without launching Microsoft Excel or LibreOffice.
 
-If you are looking for an MCP server for Excel, spreadsheet automation, workbook inspection, Excel report generation, or `.xlsx` editing from AI tools, SheetForge MCP is built for that workflow.
+If you are looking for an Excel MCP server for spreadsheet automation, workbook inspection, Excel report generation, dashboard authoring, or `.xlsx` editing from AI tools, SheetForge MCP is built for that workflow.
 
 Package name: `sheetforge-mcp`
 CLI command: `sheetforge-mcp`
-Current release: `0.4.2`
+Published package release: `0.4.2`
+Repository docs track the current main-branch tool surface, which currently exposes `51` MCP tools.
 
 ## Excel MCP Server Features
 
@@ -139,7 +140,7 @@ The most agent-friendly read tools are:
 - `read_excel_table`: read a native Excel table by `table_name` without guessing worksheet bounds, now with `start_row` pagination and optional `start_col` / `end_col` table column windowing
 - `list_all_sheets`: quick workbook inventory with sheet sizes, emptiness flags, and `sheet_type` for worksheets versus chart sheets
 - `read_excel_as_table`: compact `headers + rows` output for structured datasets, with `compact=True` for the smallest payload, `start_row` for page-like reads, and `start_col` / `end_col` for narrower column slices
-- `read_data_from_excel`: cell-address-aware range reader that now supports `max_rows` and `max_cols` windowing for large non-tabular ranges, plus `values_only=True` for smaller 2D payloads
+- `read_data_from_excel`: cell-address-aware range reader that supports `max_rows` and `max_cols` windowing for large non-tabular ranges, `values_only=True` for smaller 2D payloads, and cursor-based continuations for multi-step 2D traversal
 - `search_in_sheet`: exact or partial value search across a worksheet
 
 Workbook inventory tools such as `list_all_sheets`, `profile_workbook`, and `list_charts` surface both worksheets and chart sheets. Grid-oriented tools such as `quick_read`, `read_excel_table`, `create_table`, formatting, formulas, and validation require a real worksheet and return a clear chartsheet error if you target the wrong sheet type.
@@ -159,6 +160,7 @@ For the compact table readers (`quick_read`, `read_excel_as_table`, `read_excel_
 - `infer_schema=True` adds lightweight `schema` hints inferred from the returned rows
 - `start_col` / `end_col` let you slice wide worksheets or native Excel tables down to just the columns you need before pagination or schema inference
 - truncated pages now include `next_start_row`, which you can pass back to the same tool for the next page
+- non-tabular range reads can also return `continuations.down` and `continuations.right` cursor tokens so agents can continue large 2D windows without recomputing coordinates
 
 See [TOOLS.md](TOOLS.md) for the full reference.
 Release notes live in [CHANGELOG.md](CHANGELOG.md).

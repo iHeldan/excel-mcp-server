@@ -4,22 +4,22 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SheetForge MCP | Excel MCP Server for .xlsx Automation</title>
-  <meta name="description" content="SheetForge MCP is an Excel MCP server for AI agents and automation workflows. Read, write, search, format, chart, and automate .xlsx workbooks over the Model Context Protocol with Python and openpyxl.">
+  <meta name="description" content="SheetForge MCP is an Excel MCP server for AI agents, spreadsheet automation, workbook inspection, Excel report generation, and .xlsx dashboard workflows over the Model Context Protocol.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="SheetForge MCP | Excel MCP Server for .xlsx Automation">
-  <meta name="twitter:description" content="Excel MCP server for AI agents and automation workflows that need structured .xlsx workbook access over the Model Context Protocol.">
+  <meta name="twitter:description" content="Excel MCP server for AI agents, spreadsheet automation, workbook inspection, and structured .xlsx reporting over the Model Context Protocol.">
   <meta name="robots" content="index,follow">
   <link rel="canonical" href="https://github.com/iHeldan/sheetforge-mcp">
   <meta property="og:type" content="website">
   <meta property="og:title" content="SheetForge MCP | Excel MCP Server for .xlsx Automation">
-  <meta property="og:description" content="Excel MCP server for AI agents and automation workflows that need structured .xlsx workbook access over the Model Context Protocol.">
+  <meta property="og:description" content="Excel MCP server for AI agents, spreadsheet automation, workbook inspection, and structured .xlsx reporting over the Model Context Protocol.">
   <meta property="og:url" content="https://github.com/iHeldan/sheetforge-mcp">
   <script type="application/ld+json">
     {
       "@context": "https://schema.org",
       "@type": "SoftwareSourceCode",
       "name": "SheetForge MCP",
-      "description": "Excel MCP server for AI agents and automation workflows that read, write, format, and automate .xlsx workbooks over the Model Context Protocol.",
+      "description": "Excel MCP server for AI agents, spreadsheet automation, workbook inspection, Excel reporting, and .xlsx dashboard workflows over the Model Context Protocol.",
       "codeRepository": "https://github.com/iHeldan/sheetforge-mcp",
       "url": "https://github.com/iHeldan/sheetforge-mcp",
       "license": "https://opensource.org/license/mit",
@@ -231,18 +231,19 @@
         <h1>SheetForge MCP</h1>
         <p>
           An Excel MCP server for AI agents and automation workflows that need to read,
-          write, search, format, and restructure `.xlsx` workbooks with `openpyxl`.
+          write, search, format, validate, chart, and restructure `.xlsx` workbooks with `openpyxl`.
         </p>
         <p>
           Use SheetForge MCP when you want spreadsheet automation, workbook inspection,
-          Excel report generation, or dashboard updates over the Model Context Protocol
-          without launching desktop Excel.
+          Excel report generation, dashboard updates, or workbook-safe mutation planning
+          over the Model Context Protocol without launching desktop Excel.
         </p>
         <p>
-          Current release: <strong>0.4.2</strong>. The main branch now covers 49 MCP
-          tools, including workbook profiling, native-table upserts, compact mutation
-          responses, object-mode reads with schema hints, placement-aware chart authoring,
-          and workbook-level chart footprint metadata.
+          Published package release: <strong>0.4.2</strong>. The repository currently
+          exposes <strong>51 MCP tools</strong>, including workbook profiling,
+          native-table upserts, compact mutation responses, cursor-based 2D range reads,
+          placement-aware chart authoring, and workbook-level impact analysis for formulas,
+          validations, and conditional formatting.
         </p>
         <div class="hero-actions">
           <a class="button button-primary" href="https://github.com/iHeldan/sheetforge-mcp">View Repository</a>
@@ -255,7 +256,7 @@
         <h2>At a glance</h2>
         <ul class="meta-list">
           <li>Python 3.10+</li>
-          <li>49 MCP tools</li>
+          <li>51 MCP tools</li>
           <li>Supports `stdio`, `streamable-http`, and deprecated `sse`</li>
           <li>Uniform JSON envelopes for every tool response</li>
           <li>No Microsoft Excel dependency</li>
@@ -283,6 +284,8 @@
           <li><strong>`profile_workbook`</strong><br>One-call workbook inventory with tables, charts, filters, print settings, and protection state.</li>
           <li><strong>`quick_read`</strong><br>Single-call compact table read with automatic first-sheet selection.</li>
           <li><strong>`read_excel_table`</strong><br>Read a native Excel table by name without guessing worksheet bounds.</li>
+          <li><strong>`read_data_from_excel`</strong><br>Read non-tabular ranges with compact payloads and cursor-based continuations.</li>
+          <li><strong>`analyze_range_impact`</strong><br>Inspect blast radius before edits, including formulas, validation rules, and conditional formatting.</li>
           <li><strong>`create_chart`</strong><br>Create charts from either contiguous ranges or explicit series definitions.</li>
           <li><strong>`format_ranges`</strong><br>Apply batch formatting across multiple areas in one workbook pass.</li>
           <li><strong>`autofit_columns`</strong><br>Fit columns to content without hand-tuning widths.</li>
