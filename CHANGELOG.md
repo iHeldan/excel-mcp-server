@@ -6,6 +6,7 @@
 
 - Added `next_start_row` to truncated tabular read responses so agents can continue pagination without recalculating offsets.
 - Added `max_rows` pagination plus `next_start_row` / `next_start_cell` continuation hints to `read_data_from_excel` for large non-tabular range reads.
+- Added `max_cols` windowing plus `next_start_col` / `next_column_start_cell` continuation hints to `read_data_from_excel` so wide non-tabular ranges can be paged horizontally as well.
 - Added `start_col` / `end_col` support to `quick_read` and `read_excel_as_table` so wide worksheet reads can request a narrower column slice before pagination.
 - Added `start_col` / `end_col` support to `read_excel_table` so native Excel tables can now use the same narrower column slices as the worksheet table readers.
 - Added `find_free_canvas` plus `placement.relative_to="free_canvas"` so chart and dashboard workflows can discover non-overlapping layout slots automatically.

@@ -438,6 +438,7 @@ def read_excel_range_with_metadata(
     start_cell: str = "A1",
     end_cell: Optional[str] = None,
     max_rows: Optional[int] = None,
+    max_cols: Optional[int] = None,
     include_validation: bool = True,
     compact: bool = False,
     values_only: bool = False,
@@ -457,6 +458,8 @@ def read_excel_range_with_metadata(
     try:
         if max_rows is not None and max_rows <= 0:
             raise DataError("max_rows must be a positive integer")
+        if max_cols is not None and max_cols <= 0:
+            raise DataError("max_cols must be a positive integer")
 
         with safe_workbook(str(filepath)) as wb:
             ws = require_worksheet(
@@ -499,8 +502,11 @@ def read_excel_range_with_metadata(
                     end_col = ws.max_column
 
             requested_end_row = end_row
+            requested_end_col = end_col
             if max_rows is not None:
                 end_row = min(end_row, start_row + max_rows - 1)
+            if max_cols is not None:
+                end_col = min(end_col, start_col + max_cols - 1)
 
             # Validate range bounds
             if start_row > ws.max_row or start_col > ws.max_column:
@@ -509,20 +515,32 @@ def read_excel_range_with_metadata(
                     f"({get_column_letter(ws.min_column)}{ws.min_row}:{get_column_letter(ws.max_column)}{ws.max_row}). "
                     f"No data will be read."
                 )
+                requested_range = f"{start_cell}:{end_cell}" if end_cell else start_cell
                 empty_key = "values" if values_only else "cells"
-                return {"range": f"{start_cell}:", "sheet_name": sheet_name, empty_key: []}
+                return {"range": requested_range, "sheet_name": sheet_name, empty_key: []}
 
             range_str = f"{get_column_letter(start_col)}{start_row}:{get_column_letter(end_col)}{end_row}"
             range_data = {"range": range_str, "sheet_name": sheet_name}
             total_rows = requested_end_row - start_row + 1
-            truncated = end_row < requested_end_row
+            total_cols = requested_end_col - start_col + 1
+            truncated_rows = max_rows is not None and end_row < requested_end_row
+            truncated_cols = max_cols is not None and end_col < requested_end_col
+            truncated = truncated_rows or truncated_cols
             if max_rows is not None:
                 range_data["total_rows"] = total_rows
+            if max_cols is not None:
+                range_data["total_cols"] = total_cols
+            if max_rows is not None or max_cols is not None:
                 range_data["truncated"] = truncated
-                if truncated:
+            if max_rows is not None:
+                if truncated_rows:
                     next_start_row = end_row + 1
                     range_data["next_start_row"] = next_start_row
                     range_data["next_start_cell"] = f"{get_column_letter(start_col)}{next_start_row}"
+            if max_cols is not None and truncated_cols:
+                next_start_col = end_col + 1
+                range_data["next_start_col"] = get_column_letter(next_start_col)
+                range_data["next_column_start_cell"] = f"{get_column_letter(next_start_col)}{start_row}"
 
             if values_only:
                 values: List[List[Any]] = []

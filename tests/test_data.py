@@ -387,6 +387,23 @@ def test_read_excel_range_with_metadata_supports_row_pagination(tmp_workbook):
     assert [cell["address"] for cell in result["cells"]] == ["A1", "B1", "A2", "B2"]
 
 
+def test_read_excel_range_with_metadata_supports_column_pagination(tmp_workbook):
+    result = read_excel_range_with_metadata(
+        tmp_workbook,
+        "Sheet1",
+        start_cell="A1",
+        end_cell="C6",
+        max_cols=2,
+    )
+
+    assert result["range"] == "A1:B6"
+    assert result["total_cols"] == 3
+    assert result["truncated"] is True
+    assert result["next_start_col"] == "C"
+    assert result["next_column_start_cell"] == "C1"
+    assert [cell["address"] for cell in result["cells"][:4]] == ["A1", "B1", "A2", "B2"]
+
+
 def test_read_excel_range_with_metadata_values_only_supports_row_pagination(tmp_workbook):
     result = read_excel_range_with_metadata(
         tmp_workbook,
@@ -407,6 +424,34 @@ def test_read_excel_range_with_metadata_values_only_supports_row_pagination(tmp_
         "values": [
             ["Name", "Age"],
             ["Alice", 30],
+        ],
+    }
+
+
+def test_read_excel_range_with_metadata_values_only_supports_column_pagination(tmp_workbook):
+    result = read_excel_range_with_metadata(
+        tmp_workbook,
+        "Sheet1",
+        start_cell="A1",
+        end_cell="C6",
+        max_cols=2,
+        values_only=True,
+    )
+
+    assert result == {
+        "range": "A1:B6",
+        "sheet_name": "Sheet1",
+        "total_cols": 3,
+        "truncated": True,
+        "next_start_col": "C",
+        "next_column_start_cell": "C1",
+        "values": [
+            ["Name", "Age"],
+            ["Alice", 30],
+            ["Bob", 25],
+            ["Carol", 35],
+            ["Dave", 28],
+            ["Eve", 32],
         ],
     }
 
@@ -452,6 +497,55 @@ def test_read_data_from_excel_supports_row_pagination(tmp_workbook):
     assert [cell["address"] for cell in payload["data"]["cells"]] == ["A1", "B1", "A2", "B2"]
 
 
+def test_read_data_from_excel_supports_column_pagination(tmp_workbook):
+    payload = _load_tool_payload(
+        read_data_from_excel(
+            tmp_workbook,
+            "Sheet1",
+            start_cell="A1",
+            end_cell="C6",
+            max_cols=2,
+        )
+    )
+
+    assert payload["data"]["range"] == "A1:B6"
+    assert payload["data"]["total_cols"] == 3
+    assert payload["data"]["truncated"] is True
+    assert payload["data"]["next_start_col"] == "C"
+    assert payload["data"]["next_column_start_cell"] == "C1"
+    assert [cell["address"] for cell in payload["data"]["cells"][:4]] == ["A1", "B1", "A2", "B2"]
+
+
+def test_read_data_from_excel_supports_2d_pagination(tmp_workbook):
+    payload = _load_tool_payload(
+        read_data_from_excel(
+            tmp_workbook,
+            "Sheet1",
+            start_cell="A1",
+            end_cell="C6",
+            max_rows=2,
+            max_cols=2,
+            values_only=True,
+        )
+    )
+
+    assert payload["data"] == {
+        "range": "A1:B2",
+        "sheet_name": "Sheet1",
+        "total_rows": 6,
+        "total_cols": 3,
+        "truncated": True,
+        "next_start_row": 3,
+        "next_start_cell": "A3",
+        "next_start_col": "C",
+        "next_column_start_cell": "C1",
+        "values": [
+            ["Name", "Age"],
+            ["Alice", 30],
+        ],
+    }
+
+
 def test_read_data_from_excel_values_only_supports_row_pagination(tmp_workbook):
     payload = _load_tool_payload(
         read_data_from_excel(
@@ -486,6 +580,7 @@ def test_read_data_from_excel_values_only_handles_out_of_bounds_start(tmp_workbo
     )
 
     assert payload["data"]["values"] == []
+    assert payload["data"]["range"] == "Z100"
     assert "cells" not in payload["data"]
 
 
@@ -494,6 +589,13 @@ def test_read_data_from_excel_rejects_non_positive_max_rows(tmp_workbook):
 
     assert payload["ok"] is False
     assert payload["error"]["message"] == "max_rows must be a positive integer"
+
+
+def test_read_data_from_excel_rejects_non_positive_max_cols(tmp_workbook):
+    payload = json.loads(read_data_from_excel(tmp_workbook, "Sheet1", max_cols=0))
+
+    assert payload["ok"] is False
+    assert payload["error"]["message"] == "max_cols must be a positive integer"
 
 
 def test_read_excel_as_table_compact_omits_nonessential_metadata(tmp_workbook):
@@ -729,6 +831,7 @@ def test_read_data_from_excel_returns_guided_error_before_oversized_payload(
     assert payload["error"]["estimated_size"] > payload["error"]["limit"]
     assert any("values_only=True" in hint for hint in payload["error"]["hints"])
     assert any("max_rows" in hint for hint in payload["error"]["hints"])
+    assert any("max_cols" in hint for hint in payload["error"]["hints"])
     assert any("preview_only=True" in hint for hint in payload["error"]["hints"])
     assert any("start_cell/end_cell" in hint for hint in payload["error"]["hints"])
 

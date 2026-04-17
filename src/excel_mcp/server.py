@@ -155,6 +155,7 @@ def _response_size_hints(operation: str, payload: Dict[str, Any]) -> List[str]:
             hints.append("use values_only=True to return a smaller 2D values array")
         hints.append("request a smaller range via start_cell/end_cell")
         hints.append("set max_rows to page through tall ranges")
+        hints.append("set max_cols to page through wide ranges")
         if not data_dict.get("preview_only"):
             hints.append("use preview_only=True to limit the response to the first 10 rows")
         hints.append("use read_excel_as_table plus start_row/max_rows for tabular worksheet data")
@@ -433,6 +434,7 @@ def read_data_from_excel(
     start_cell: str = "A1",
     end_cell: Optional[str] = None,
     max_rows: Optional[int] = None,
+    max_cols: Optional[int] = None,
     preview_only: bool = False,
     compact: bool = False,
     values_only: bool = False,
@@ -446,6 +448,7 @@ def read_data_from_excel(
         start_cell: Starting cell (default A1)
         end_cell: Ending cell (optional, auto-expands if not provided)
         max_rows: Optional maximum number of rows to return from the starting row
+        max_cols: Optional maximum number of columns to return from the starting column
         preview_only: Whether to return preview only
         compact: Whether to omit default validation metadata for smaller responses
         values_only: Whether to return a 2D value grid without per-cell metadata
@@ -471,6 +474,7 @@ def read_data_from_excel(
             start_cell,
             end_cell,
             max_rows=effective_max_rows,
+            max_cols=max_cols,
             compact=compact,
             values_only=values_only,
         )

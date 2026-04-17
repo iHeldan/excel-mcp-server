@@ -139,7 +139,7 @@ The most agent-friendly read tools are:
 - `read_excel_table`: read a native Excel table by `table_name` without guessing worksheet bounds, now with `start_row` pagination and optional `start_col` / `end_col` table column windowing
 - `list_all_sheets`: quick workbook inventory with sheet sizes, emptiness flags, and `sheet_type` for worksheets versus chart sheets
 - `read_excel_as_table`: compact `headers + rows` output for structured datasets, with `compact=True` for the smallest payload, `start_row` for page-like reads, and `start_col` / `end_col` for narrower column slices
-- `read_data_from_excel`: cell-address-aware range reader that now also supports `max_rows` pagination for large non-tabular ranges, plus `values_only=True` for smaller 2D payloads
+- `read_data_from_excel`: cell-address-aware range reader that now supports `max_rows` and `max_cols` windowing for large non-tabular ranges, plus `values_only=True` for smaller 2D payloads
 - `search_in_sheet`: exact or partial value search across a worksheet
 
 Workbook inventory tools such as `list_all_sheets`, `profile_workbook`, and `list_charts` surface both worksheets and chart sheets. Grid-oriented tools such as `quick_read`, `read_excel_table`, `create_table`, formatting, formulas, and validation require a real worksheet and return a clear chartsheet error if you target the wrong sheet type.
@@ -259,6 +259,7 @@ uv build
 - `read_data_from_excel(..., compact=True)` omits default validation stubs for cells that do not have validation rules.
 - `read_data_from_excel(..., values_only=True)` returns a plain 2D `values` array for range reads that do not need per-cell addresses or validation metadata.
 - `read_data_from_excel(..., max_rows=...)` paginates tall rectangular ranges and returns `next_start_row` plus `next_start_cell` when more rows remain.
+- `read_data_from_excel(..., max_cols=...)` paginates wide rectangular ranges and returns `next_start_col` plus `next_column_start_cell` when more columns remain.
 - `read_excel_as_table(..., compact=True)` returns only `headers` and `rows` unless truncation metadata is needed.
 - `quick_read(..., start_row=...)` and `read_excel_as_table(..., start_row=...)` let agents paginate deep worksheets without first reading from the top.
 - `quick_read(..., start_col=..., end_col=...)` and `read_excel_as_table(..., start_col=..., end_col=...)` let agents request only the relevant columns from wide worksheets instead of pulling every column into context.
