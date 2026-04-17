@@ -370,6 +370,47 @@ def test_read_excel_range_with_metadata_values_only_returns_2d_values(tmp_workbo
     }
 
 
+def test_read_excel_range_with_metadata_supports_row_pagination(tmp_workbook):
+    result = read_excel_range_with_metadata(
+        tmp_workbook,
+        "Sheet1",
+        start_cell="A1",
+        end_cell="B6",
+        max_rows=2,
+    )
+
+    assert result["range"] == "A1:B2"
+    assert result["total_rows"] == 6
+    assert result["truncated"] is True
+    assert result["next_start_row"] == 3
+    assert result["next_start_cell"] == "A3"
+    assert [cell["address"] for cell in result["cells"]] == ["A1", "B1", "A2", "B2"]
+
+
+def test_read_excel_range_with_metadata_values_only_supports_row_pagination(tmp_workbook):
+    result = read_excel_range_with_metadata(
+        tmp_workbook,
+        "Sheet1",
+        start_cell="A1",
+        end_cell="B6",
+        max_rows=2,
+        values_only=True,
+    )
+
+    assert result == {
+        "range": "A1:B2",
+        "sheet_name": "Sheet1",
+        "total_rows": 6,
+        "truncated": True,
+        "next_start_row": 3,
+        "next_start_cell": "A3",
+        "values": [
+            ["Name", "Age"],
+            ["Alice", 30],
+        ],
+    }
+
+
 def test_read_data_from_excel_values_only_preview_limits_rows(tmp_path):
     filepath = tmp_path / "preview-values.xlsx"
     wb = Workbook()
@@ -392,6 +433,48 @@ def test_read_data_from_excel_values_only_preview_limits_rows(tmp_path):
     assert payload["data"]["truncated"] is True
 
 
+def test_read_data_from_excel_supports_row_pagination(tmp_workbook):
+    payload = _load_tool_payload(
+        read_data_from_excel(
+            tmp_workbook,
+            "Sheet1",
+            start_cell="A1",
+            end_cell="B6",
+            max_rows=2,
+        )
+    )
+
+    assert payload["data"]["range"] == "A1:B2"
+    assert payload["data"]["total_rows"] == 6
+    assert payload["data"]["truncated"] is True
+    assert payload["data"]["next_start_row"] == 3
+    assert payload["data"]["next_start_cell"] == "A3"
+    assert [cell["address"] for cell in payload["data"]["cells"]] == ["A1", "B1", "A2", "B2"]
+
+
+def test_read_data_from_excel_values_only_supports_row_pagination(tmp_workbook):
+    payload = _load_tool_payload(
+        read_data_from_excel(
+            tmp_workbook,
+            "Sheet1",
+            start_cell="A1",
+            end_cell="B6",
+            max_rows=2,
+            values_only=True,
+        )
+    )
+
+    assert payload["data"]["range"] == "A1:B2"
+    assert payload["data"]["total_rows"] == 6
+    assert payload["data"]["truncated"] is True
+    assert payload["data"]["next_start_row"] == 3
+    assert payload["data"]["next_start_cell"] == "A3"
+    assert payload["data"]["values"] == [
+        ["Name", "Age"],
+        ["Alice", 30],
+    ]
+
+
 def test_read_data_from_excel_values_only_handles_out_of_bounds_start(tmp_workbook):
     payload = _load_tool_payload(
         read_data_from_excel(
@@ -404,6 +487,13 @@ def test_read_data_from_excel_values_only_handles_out_of_bounds_start(tmp_workbo
 
     assert payload["data"]["values"] == []
     assert "cells" not in payload["data"]
+
+
+def test_read_data_from_excel_rejects_non_positive_max_rows(tmp_workbook):
+    payload = json.loads(read_data_from_excel(tmp_workbook, "Sheet1", max_rows=0))
+
+    assert payload["ok"] is False
+    assert payload["error"]["message"] == "max_rows must be a positive integer"
 
 
 def test_read_excel_as_table_compact_omits_nonessential_metadata(tmp_workbook):
@@ -638,6 +728,7 @@ def test_read_data_from_excel_returns_guided_error_before_oversized_payload(
     assert payload["error"]["type"] == "ResponseTooLargeError"
     assert payload["error"]["estimated_size"] > payload["error"]["limit"]
     assert any("values_only=True" in hint for hint in payload["error"]["hints"])
+    assert any("max_rows" in hint for hint in payload["error"]["hints"])
     assert any("preview_only=True" in hint for hint in payload["error"]["hints"])
     assert any("start_cell/end_cell" in hint for hint in payload["error"]["hints"])
 

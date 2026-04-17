@@ -154,6 +154,7 @@ def _response_size_hints(operation: str, payload: Dict[str, Any]) -> List[str]:
         if "cells" in data_dict:
             hints.append("use values_only=True to return a smaller 2D values array")
         hints.append("request a smaller range via start_cell/end_cell")
+        hints.append("set max_rows to page through tall ranges")
         if not data_dict.get("preview_only"):
             hints.append("use preview_only=True to limit the response to the first 10 rows")
         hints.append("use read_excel_as_table plus start_row/max_rows for tabular worksheet data")
@@ -431,6 +432,7 @@ def read_data_from_excel(
     sheet_name: str,
     start_cell: str = "A1",
     end_cell: Optional[str] = None,
+    max_rows: Optional[int] = None,
     preview_only: bool = False,
     compact: bool = False,
     values_only: bool = False,
@@ -443,6 +445,7 @@ def read_data_from_excel(
         sheet_name: Name of worksheet
         start_cell: Starting cell (default A1)
         end_cell: Ending cell (optional, auto-expands if not provided)
+        max_rows: Optional maximum number of rows to return from the starting row
         preview_only: Whether to return preview only
         compact: Whether to omit default validation metadata for smaller responses
         values_only: Whether to return a 2D value grid without per-cell metadata
@@ -454,11 +457,20 @@ def read_data_from_excel(
     try:
         full_path = get_excel_path(filepath)
         from excel_mcp.data import read_excel_range_with_metadata
+        effective_max_rows = max_rows
+        if preview_only:
+            preview_row_limit = 10
+            effective_max_rows = (
+                preview_row_limit
+                if max_rows is None
+                else min(max_rows, preview_row_limit)
+            )
         result = read_excel_range_with_metadata(
             full_path,
             sheet_name,
             start_cell,
             end_cell,
+            max_rows=effective_max_rows,
             compact=compact,
             values_only=values_only,
         )
@@ -467,25 +479,6 @@ def read_data_from_excel(
             result["values" if values_only else "cells"] = []
 
         if preview_only:
-            preview_row_limit = 10
-            if values_only:
-                total_rows = len(result["values"])
-                result["values"] = result["values"][:preview_row_limit]
-                result["truncated"] = len(result["values"]) < total_rows
-            else:
-                total_cells = len(result["cells"])
-                preview_cells = []
-                preview_rows = set()
-
-                for cell in result["cells"]:
-                    row = cell["row"]
-                    if row not in preview_rows and len(preview_rows) >= preview_row_limit:
-                        break
-                    preview_rows.add(row)
-                    preview_cells.append(cell)
-
-                result["cells"] = preview_cells
-                result["truncated"] = len(preview_cells) < total_cells
             result["preview_only"] = True
 
         if values_only:
