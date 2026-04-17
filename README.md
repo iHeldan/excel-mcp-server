@@ -136,7 +136,7 @@ The most agent-friendly read tools are:
 - `profile_workbook`: one-call inventory for sheets, tables, charts, named ranges, and key layout/protection state, including chart `occupied_range` for grid-anchored worksheet charts
 - `analyze_range_impact`: preflight blast-radius check for a worksheet range, including overlaps with tables, chart footprints, merged cells, named ranges, autofilters, print areas, formula cells inside the range, and formulas elsewhere that depend on it directly, through named ranges, or through structured table references such as `Table1[Sales]`
 - `quick_read`: single-call compact table read that auto-selects the first sheet when needed, now with `start_row` pagination and `start_col` / `end_col` column windowing for large sheets
-- `read_excel_table`: read a native Excel table by `table_name` without guessing worksheet bounds
+- `read_excel_table`: read a native Excel table by `table_name` without guessing worksheet bounds, now with `start_row` pagination and optional `start_col` / `end_col` table column windowing
 - `list_all_sheets`: quick workbook inventory with sheet sizes, emptiness flags, and `sheet_type` for worksheets versus chart sheets
 - `read_excel_as_table`: compact `headers + rows` output for structured datasets, with `compact=True` for the smallest payload, `start_row` for page-like reads, and `start_col` / `end_col` for narrower column slices
 - `search_in_sheet`: exact or partial value search across a worksheet
@@ -156,7 +156,7 @@ For the compact table readers (`quick_read`, `read_excel_as_table`, `read_excel_
 - `row_mode="objects"` returns `records` keyed by normalized field names such as `first_name`
 - normalized field names are ASCII-safe transliterations, so headers like `Näyttökerrat` become `nayttokerrat`
 - `infer_schema=True` adds lightweight `schema` hints inferred from the returned rows
-- `start_col` / `end_col` let you slice wide worksheets down to just the columns you need before pagination or schema inference
+- `start_col` / `end_col` let you slice wide worksheets or native Excel tables down to just the columns you need before pagination or schema inference
 - truncated pages now include `next_start_row`, which you can pass back to the same tool for the next page
 
 See [TOOLS.md](TOOLS.md) for the full reference.
@@ -260,6 +260,7 @@ uv build
 - `read_excel_as_table(..., compact=True)` returns only `headers` and `rows` unless truncation metadata is needed.
 - `quick_read(..., start_row=...)` and `read_excel_as_table(..., start_row=...)` let agents paginate deep worksheets without first reading from the top.
 - `quick_read(..., start_col=..., end_col=...)` and `read_excel_as_table(..., start_col=..., end_col=...)` let agents request only the relevant columns from wide worksheets instead of pulling every column into context.
+- `read_excel_table(..., start_col=..., end_col=...)` now supports the same narrower column slices for native Excel tables, as long as the requested columns fall inside the table range.
 - `quick_read(..., include_headers=False)`, `read_excel_as_table(..., include_headers=False)`, and `read_excel_table(..., include_headers=False)` let follow-up pages omit repeated header payload once the first page already established the schema.
 - `read_excel_table(..., start_row=...)` now supports deeper pagination into native Excel tables instead of always reading from the top.
 - Truncated tabular reads now return `next_start_row` so agents can continue paging without recalculating offsets.

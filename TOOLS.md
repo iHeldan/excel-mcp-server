@@ -175,8 +175,8 @@ Returns matches under `data.matches`:
   Returns one entry per sheet, including `sheet_type`. Worksheets include `rows`, `columns`, `column_range`, and `is_empty`; chart sheets are reported with `sheet_type="chartsheet"` and zero grid dimensions.
 - `list_tables(filepath: str, sheet_name: Optional[str] = None) -> str`
   Returns native Excel tables across the workbook or for one worksheet, including `sheet_name`, `table_name`, `range`, `style`, `headers`, row counts, and style flags.
-- `read_excel_table(filepath: str, table_name: str, sheet_name: Optional[str] = None, start_row: int = 1, max_rows: Optional[int] = None, compact: bool = False, include_headers: bool = True, row_mode: str = "arrays", infer_schema: bool = False) -> str`
-  Reads rows from a native Excel table by `table_name`, preserving the table's exact range instead of inferring worksheet bounds. Use `start_row` plus `max_rows` to paginate within table data rows, and `include_headers=False` for follow-up pages after the first. When more rows remain, the response includes `next_start_row` for the next page.
+- `read_excel_table(filepath: str, table_name: str, sheet_name: Optional[str] = None, start_row: int = 1, start_col: Optional[str] = None, end_col: Optional[str] = None, max_rows: Optional[int] = None, compact: bool = False, include_headers: bool = True, row_mode: str = "arrays", infer_schema: bool = False) -> str`
+  Reads rows from a native Excel table by `table_name`, preserving the table's exact range instead of inferring worksheet bounds. Use `start_row` plus `max_rows` to paginate within table data rows, `start_col` / `end_col` to narrow the table width, and `include_headers=False` for follow-up pages after the first. Requested columns must fall inside the table range. When more rows remain, the response includes `next_start_row` for the next page.
 
 ## Read, Search, And Write Tools
 

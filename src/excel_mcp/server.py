@@ -161,6 +161,7 @@ def _response_size_hints(operation: str, payload: Dict[str, Any]) -> List[str]:
         hints.append("set max_rows to request a smaller page")
         if operation == "read_excel_table":
             hints.append("use start_row to continue from a later table row")
+            hints.append("use start_col/end_col to request a narrower table column slice")
         else:
             hints.append("use start_row to continue from a deeper row without rereading the top")
             hints.append("use start_col/end_col to request a narrower column slice")
@@ -601,6 +602,8 @@ def read_excel_table(
     table_name: str,
     sheet_name: Optional[str] = None,
     start_row: int = 1,
+    start_col: Optional[str] = None,
+    end_col: Optional[str] = None,
     max_rows: Optional[int] = None,
     compact: bool = False,
     include_headers: bool = True,
@@ -619,6 +622,8 @@ def read_excel_table(
             table_name,
             sheet_name=sheet_name,
             start_row=start_row,
+            start_col=start_col,
+            end_col=end_col,
             max_rows=max_rows,
             compact=compact,
             include_headers=include_headers,

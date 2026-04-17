@@ -2,7 +2,7 @@ import uuid
 import logging
 from typing import Any, Optional
 
-from openpyxl.utils import get_column_letter, range_boundaries
+from openpyxl.utils import column_index_from_string, get_column_letter, range_boundaries
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from .data import _build_cell_change, _should_include_changes, augment_tabular_payload
 from .exceptions import DataError
@@ -68,6 +68,37 @@ def _build_table_metadata(
 
 def _range_from_bounds(min_col: int, min_row: int, max_col: int, max_row: int) -> str:
     return f"{get_column_letter(min_col)}{min_row}:{get_column_letter(max_col)}{max_row}"
+
+
+def _column_index(label: str, *, argument_name: str) -> int:
+    try:
+        return column_index_from_string(label.upper())
+    except ValueError as exc:
+        raise DataError(f"{argument_name} must be a valid Excel column label") from exc
+
+
+def _resolve_table_column_window(
+    table: Table,
+    *,
+    start_col: Optional[str] = None,
+    end_col: Optional[str] = None,
+) -> tuple[int, int]:
+    min_col, _, max_col, _ = range_boundaries(table.ref)
+    start_col_idx = min_col if start_col is None else _column_index(start_col, argument_name="start_col")
+    end_col_idx = max_col if end_col is None else _column_index(end_col, argument_name="end_col")
+
+    if start_col_idx < min_col or start_col_idx > max_col:
+        raise DataError(
+            f"start_col must fall within the table range ({get_column_letter(min_col)}:{get_column_letter(max_col)})"
+        )
+    if end_col_idx < min_col or end_col_idx > max_col:
+        raise DataError(
+            f"end_col must fall within the table range ({get_column_letter(min_col)}:{get_column_letter(max_col)})"
+        )
+    if end_col_idx < start_col_idx:
+        raise DataError("end_col must be greater than or equal to start_col")
+
+    return start_col_idx, end_col_idx
 
 
 def _table_header_map(ws: Any, table: Table) -> dict[str, int]:
@@ -249,6 +280,8 @@ def read_excel_table(
     table_name: str,
     sheet_name: Optional[str] = None,
     start_row: int = 1,
+    start_col: Optional[str] = None,
+    end_col: Optional[str] = None,
     max_rows: Optional[int] = None,
     compact: bool = False,
     include_headers: bool = True,
@@ -270,6 +303,11 @@ def read_excel_table(
             current_sheet_name, ws, table = _find_table(wb, table_name, sheet_name=sheet_name)
             metadata = _build_table_metadata(current_sheet_name, ws, table)
             min_col, min_row, max_col, max_row = range_boundaries(table.ref)
+            selected_start_col, selected_end_col = _resolve_table_column_window(
+                table,
+                start_col=start_col,
+                end_col=end_col,
+            )
 
             data_start_row = min_row + metadata["header_row_count"]
             data_end_row = max_row - metadata["totals_row_count"]
@@ -286,9 +324,11 @@ def read_excel_table(
                 rows.append(
                     [
                         ws.cell(row=row_index, column=column_index).value
-                        for column_index in range(min_col, max_col + 1)
+                        for column_index in range(selected_start_col, selected_end_col + 1)
                     ]
                 )
+
+            headers = metadata["headers"][selected_start_col - min_col : selected_end_col - min_col + 1]
 
             next_start_row = None
             if max_rows is not None and available_rows > max_rows:
@@ -299,7 +339,7 @@ def read_excel_table(
                 "table_name": table.displayName,
                 "range": table.ref,
                 "style": metadata["style"],
-                "headers": metadata["headers"],
+                "headers": headers,
                 "rows": rows,
                 "total_rows": total_rows,
                 "truncated": max_rows is not None and available_rows > max_rows,

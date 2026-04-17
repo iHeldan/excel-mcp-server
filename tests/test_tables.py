@@ -4,6 +4,7 @@ import pytest
 from openpyxl import Workbook, load_workbook
 from openpyxl.chart import BarChart, Reference
 from openpyxl.worksheet.table import Table, TableStyleInfo
+import excel_mcp.server as server_module
 
 from excel_mcp.server import (
     list_tables as list_tables_tool,
@@ -276,6 +277,46 @@ def test_read_excel_table_can_omit_headers_for_followup_pages(tmp_workbook):
     assert result["next_start_row"] == 5
 
 
+def test_read_excel_table_supports_column_windowing(tmp_workbook):
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
+
+    result = read_excel_table(
+        tmp_workbook,
+        "Customers",
+        start_col="B",
+        end_col="C",
+        compact=True,
+    )
+
+    assert result == {
+        "sheet_name": "Sheet1",
+        "table_name": "Customers",
+        "range": "A1:C6",
+        "headers": ["Age", "City"],
+        "rows": [
+            [30, "Helsinki"],
+            [25, "Tampere"],
+            [35, "Turku"],
+            [28, "Oulu"],
+            [32, "Espoo"],
+        ],
+    }
+
+
+def test_read_excel_table_rejects_end_col_before_start_col(tmp_workbook):
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
+
+    with pytest.raises(DataError, match="end_col must be greater than or equal to start_col"):
+        read_excel_table(tmp_workbook, "Customers", start_col="C", end_col="B")
+
+
+def test_read_excel_table_rejects_column_window_outside_table(tmp_workbook):
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
+
+    with pytest.raises(DataError, match="start_col must fall within the table range"):
+        read_excel_table(tmp_workbook, "Customers", start_col="D")
+
+
 def test_read_excel_table_omits_next_start_row_on_final_page(tmp_workbook):
     create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
 
@@ -376,6 +417,47 @@ def test_read_excel_table_tool_accepts_pagination_without_headers(tmp_workbook):
         ["Carol", 35, "Turku"],
         ["Dave", 28, "Oulu"],
     ]
+
+
+def test_read_excel_table_tool_supports_column_windowing(tmp_workbook):
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
+
+    payload = _load_tool_payload(
+        read_excel_table_tool(
+            tmp_workbook,
+            "Customers",
+            start_col="B",
+            end_col="C",
+            compact=True,
+        )
+    )
+
+    assert payload["data"]["headers"] == ["Age", "City"]
+    assert payload["data"]["rows"][0] == [30, "Helsinki"]
+
+
+def test_read_excel_table_tool_rejects_column_window_outside_table(tmp_workbook):
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
+
+    payload = json.loads(read_excel_table_tool(tmp_workbook, "Customers", start_col="D"))
+
+    assert payload["ok"] is False
+    assert "start_col must fall within the table range" in payload["error"]["message"]
+
+
+def test_read_excel_table_returns_guided_error_before_oversized_payload(
+    tmp_workbook,
+    monkeypatch,
+):
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
+    monkeypatch.setattr(server_module, "MCP_RESPONSE_CHAR_LIMIT", 120)
+
+    payload = json.loads(read_excel_table_tool(tmp_workbook, "Customers"))
+
+    assert payload["ok"] is False
+    assert payload["error"]["type"] == "ResponseTooLargeError"
+    assert any("start_row" in hint for hint in payload["error"]["hints"])
+    assert any("start_col/end_col" in hint for hint in payload["error"]["hints"])
 
 
 def test_read_excel_table_tool_can_return_records_and_schema(tmp_workbook):
