@@ -117,7 +117,12 @@ def _iter_range_references(
     if not range_ref:
         return []
 
-    parts = range_ref if isinstance(range_ref, (list, tuple)) else str(range_ref).split(",")
+    if hasattr(range_ref, "ranges"):
+        parts = [str(item) for item in range_ref.ranges]
+    elif isinstance(range_ref, (list, tuple)):
+        parts = range_ref
+    else:
+        parts = str(range_ref).split(",")
     references: list[tuple[tuple[int, int, int, int], str]] = []
     for part in parts:
         cleaned = str(part).strip()
@@ -596,6 +601,239 @@ def _extract_formula_dependencies(
                             "references": matched_references,
                         }
                     )
+
+    return dependencies
+
+
+def _extract_reference_matches_from_formula_text(
+    wb: Any,
+    *,
+    formula_text: Any,
+    formula_sheet_name: str,
+    formula_row: int,
+    target_sheet: str,
+    target_bounds: tuple[int, int, int, int],
+) -> list[dict[str, Any]]:
+    if formula_text is None:
+        return []
+
+    normalized_formula = str(formula_text).strip()
+    if not normalized_formula:
+        return []
+    if not normalized_formula.startswith("="):
+        normalized_formula = f"={normalized_formula}"
+
+    try:
+        tokenizer = Tokenizer(normalized_formula)
+    except Exception:
+        return []
+
+    matched_references: list[dict[str, Any]] = []
+    for token in tokenizer.items:
+        if token.type != "OPERAND" or token.subtype != "RANGE":
+            continue
+
+        token_value = str(token.value).strip()
+        if not token_value:
+            continue
+        matched_references.extend(
+            _resolve_formula_token_references(
+                wb,
+                token_value=token_value,
+                formula_sheet_name=formula_sheet_name,
+                formula_row=formula_row,
+                target_sheet=target_sheet,
+                target_bounds=target_bounds,
+            )
+        )
+
+    return matched_references
+
+
+def _extract_validation_overlaps(
+    ws: Worksheet,
+    *,
+    sheet_name: str,
+    target_bounds: tuple[int, int, int, int],
+) -> list[dict[str, Any]]:
+    overlaps: list[dict[str, Any]] = []
+
+    for validation in getattr(getattr(ws, "data_validations", None), "dataValidation", []):
+        intersection_ranges: list[str] = []
+        for validation_bounds, validation_ref in _iter_range_references(
+            validation.sqref,
+            worksheet=ws,
+            expected_sheet=sheet_name,
+        ):
+            intersection = _intersection_bounds(target_bounds, validation_bounds)
+            if intersection is None:
+                continue
+            intersection_ranges.append(_bounds_to_range(*intersection))
+
+        if not intersection_ranges:
+            continue
+
+        overlaps.append(
+            {
+                "applies_to": str(validation.sqref),
+                "intersection_ranges": intersection_ranges,
+                "validation_type": validation.type,
+                "operator": validation.operator or None,
+                "formula1": validation.formula1 or None,
+                "formula2": validation.formula2 or None,
+            }
+        )
+
+    return overlaps
+
+
+def _extract_validation_dependencies(
+    wb: Any,
+    *,
+    target_sheet: str,
+    target_bounds: tuple[int, int, int, int],
+) -> list[dict[str, Any]]:
+    dependencies: list[dict[str, Any]] = []
+
+    for validation_sheet_name in wb.sheetnames:
+        validation_ws = wb[validation_sheet_name]
+        if _sheet_type(validation_ws) == "chartsheet":
+            continue
+
+        for validation in getattr(getattr(validation_ws, "data_validations", None), "dataValidation", []):
+            applies_to_refs = _iter_range_references(
+                validation.sqref,
+                worksheet=validation_ws,
+                expected_sheet=validation_sheet_name,
+            )
+            formula_row = applies_to_refs[0][0][0] if applies_to_refs else 1
+
+            matched_references: list[dict[str, Any]] = []
+            matched_references.extend(
+                _extract_reference_matches_from_formula_text(
+                    wb,
+                    formula_text=validation.formula1,
+                    formula_sheet_name=validation_sheet_name,
+                    formula_row=formula_row,
+                    target_sheet=target_sheet,
+                    target_bounds=target_bounds,
+                )
+            )
+            matched_references.extend(
+                _extract_reference_matches_from_formula_text(
+                    wb,
+                    formula_text=validation.formula2,
+                    formula_sheet_name=validation_sheet_name,
+                    formula_row=formula_row,
+                    target_sheet=target_sheet,
+                    target_bounds=target_bounds,
+                )
+            )
+
+            if not matched_references:
+                continue
+
+            dependencies.append(
+                {
+                    "sheet_name": validation_sheet_name,
+                    "applies_to": str(validation.sqref),
+                    "validation_type": validation.type,
+                    "operator": validation.operator or None,
+                    "formula1": validation.formula1 or None,
+                    "formula2": validation.formula2 or None,
+                    "references": matched_references,
+                }
+            )
+
+    return dependencies
+
+
+def _extract_conditional_format_overlaps(
+    ws: Worksheet,
+    *,
+    sheet_name: str,
+    target_bounds: tuple[int, int, int, int],
+) -> list[dict[str, Any]]:
+    overlaps: list[dict[str, Any]] = []
+
+    for conditional_format, rules in getattr(ws.conditional_formatting, "_cf_rules", {}).items():
+        intersection_ranges: list[str] = []
+        for format_bounds, _ in _iter_range_references(
+            conditional_format.sqref,
+            worksheet=ws,
+            expected_sheet=sheet_name,
+        ):
+            intersection = _intersection_bounds(target_bounds, format_bounds)
+            if intersection is None:
+                continue
+            intersection_ranges.append(_bounds_to_range(*intersection))
+
+        if not intersection_ranges:
+            continue
+
+        for rule in rules:
+            overlaps.append(
+                {
+                    "applies_to": str(conditional_format.sqref),
+                    "intersection_ranges": intersection_ranges,
+                    "rule_type": getattr(rule, "type", None),
+                    "operator": getattr(rule, "operator", None),
+                    "formula": list(getattr(rule, "formula", None) or []),
+                }
+            )
+
+    return overlaps
+
+
+def _extract_conditional_format_dependencies(
+    wb: Any,
+    *,
+    target_sheet: str,
+    target_bounds: tuple[int, int, int, int],
+) -> list[dict[str, Any]]:
+    dependencies: list[dict[str, Any]] = []
+
+    for format_sheet_name in wb.sheetnames:
+        format_ws = wb[format_sheet_name]
+        if _sheet_type(format_ws) == "chartsheet":
+            continue
+
+        for conditional_format, rules in getattr(format_ws.conditional_formatting, "_cf_rules", {}).items():
+            applies_to_refs = _iter_range_references(
+                conditional_format.sqref,
+                worksheet=format_ws,
+                expected_sheet=format_sheet_name,
+            )
+            formula_row = applies_to_refs[0][0][0] if applies_to_refs else 1
+
+            for rule in rules:
+                formulas = list(getattr(rule, "formula", None) or [])
+                matched_references: list[dict[str, Any]] = []
+                for formula_text in formulas:
+                    matched_references.extend(
+                        _extract_reference_matches_from_formula_text(
+                            wb,
+                            formula_text=formula_text,
+                            formula_sheet_name=format_sheet_name,
+                            formula_row=formula_row,
+                            target_sheet=target_sheet,
+                            target_bounds=target_bounds,
+                        )
+                    )
+
+                if not matched_references:
+                    continue
+
+                dependencies.append(
+                    {
+                        "sheet_name": format_sheet_name,
+                        "applies_to": str(conditional_format.sqref),
+                        "rule_type": getattr(rule, "type", None),
+                        "operator": getattr(rule, "operator", None),
+                        "formula": formulas,
+                        "references": matched_references,
+                    }
+                )
 
     return dependencies
 
@@ -1141,14 +1379,38 @@ def analyze_range_impact(filepath: str, sheet_name: str, range_ref: str) -> dict
                 target_sheet=sheet_name,
                 target_bounds=target_bounds,
             )
+            data_validations = _extract_validation_overlaps(
+                ws,
+                sheet_name=sheet_name,
+                target_bounds=target_bounds,
+            )
+            dependent_validations = _extract_validation_dependencies(
+                wb,
+                target_sheet=sheet_name,
+                target_bounds=target_bounds,
+            )
+            conditional_formats = _extract_conditional_format_overlaps(
+                ws,
+                sheet_name=sheet_name,
+                target_bounds=target_bounds,
+            )
+            dependent_conditional_formats = _extract_conditional_format_dependencies(
+                wb,
+                target_sheet=sheet_name,
+                target_bounds=target_bounds,
+            )
 
             impact_score = (
                 len(tables) * 3
                 + len(charts) * 3
                 + len(merged_ranges) * 2
                 + len(named_ranges) * 2
+                + len(data_validations) * 2
+                + len(conditional_formats) * 2
                 + (1 if formula_cells else 0)
                 + len(dependent_formulas) * 3
+                + len(dependent_validations) * 2
+                + len(dependent_conditional_formats) * 2
                 + (1 if autofilter else 0)
                 + (1 if print_area_matches else 0)
             )
@@ -1172,6 +1434,10 @@ def analyze_range_impact(filepath: str, sheet_name: str, range_ref: str) -> dict
                 hints.append("Selected range touches merged cells that may need to be unmerged first.")
             if named_ranges:
                 hints.append("Named ranges point into the selected range.")
+            if data_validations:
+                hints.append("Selected range overlaps worksheet data validation rules.")
+            if conditional_formats:
+                hints.append("Selected range overlaps conditional formatting rules.")
             if autofilter:
                 hints.append("Selected range overlaps the worksheet autofilter.")
             if print_area_matches:
@@ -1180,6 +1446,10 @@ def analyze_range_impact(filepath: str, sheet_name: str, range_ref: str) -> dict
                 hints.append("Selected range contains formula cells that may recalculate or break.")
             if dependent_formulas:
                 hints.append("Formulas elsewhere in the workbook reference the selected range.")
+            if dependent_validations:
+                hints.append("Validation rules elsewhere in the workbook reference the selected range.")
+            if dependent_conditional_formats:
+                hints.append("Conditional formatting rules reference the selected range.")
             if not hints:
                 hints.append("No overlapping workbook structures detected for this range.")
 
@@ -1193,8 +1463,12 @@ def analyze_range_impact(filepath: str, sheet_name: str, range_ref: str) -> dict
                     "chart_count": len(charts),
                     "merged_range_count": len(merged_ranges),
                     "named_range_count": len(named_ranges),
+                    "data_validation_count": len(data_validations),
+                    "conditional_format_count": len(conditional_formats),
                     "formula_cell_count": len(formula_cells),
                     "dependent_formula_count": len(dependent_formulas),
+                    "dependent_validation_count": len(dependent_validations),
+                    "dependent_conditional_format_count": len(dependent_conditional_formats),
                     "autofilter_overlap": autofilter is not None,
                     "print_area_overlap": bool(print_area_matches),
                 },
@@ -1202,6 +1476,14 @@ def analyze_range_impact(filepath: str, sheet_name: str, range_ref: str) -> dict
                 "charts": charts,
                 "merged_ranges": merged_ranges,
                 "named_ranges": named_ranges,
+                "data_validations": {
+                    "count": len(data_validations),
+                    "sample": data_validations[:10],
+                },
+                "conditional_formats": {
+                    "count": len(conditional_formats),
+                    "sample": conditional_formats[:10],
+                },
                 "formula_cells": {
                     "count": len(formula_cells),
                     "sample": formula_cells[:10],
@@ -1209,6 +1491,14 @@ def analyze_range_impact(filepath: str, sheet_name: str, range_ref: str) -> dict
                 "dependent_formulas": {
                     "count": len(dependent_formulas),
                     "sample": dependent_formulas[:10],
+                },
+                "dependent_validations": {
+                    "count": len(dependent_validations),
+                    "sample": dependent_validations[:10],
+                },
+                "dependent_conditional_formats": {
+                    "count": len(dependent_conditional_formats),
+                    "sample": dependent_conditional_formats[:10],
                 },
                 "worksheet_features": {
                     "autofilter": autofilter,

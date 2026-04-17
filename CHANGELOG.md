@@ -15,6 +15,7 @@
 - Extended `analyze_range_impact` to report downstream formulas elsewhere in the workbook that reference the selected range.
 - Extended `analyze_range_impact` again to catch downstream formula dependencies that reach the selected range through named ranges.
 - Extended `analyze_range_impact` to catch downstream dependencies that reach the selected range through structured table references such as `Table1[Sales]` and `Table1[@Sales]`.
+- Extended `analyze_range_impact` to report overlapping data validations and conditional formatting rules, plus downstream validation and conditional-format expressions that reference the selected range.
 
 ## 0.4.2 - 2026-04-11
 

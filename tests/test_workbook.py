@@ -3,6 +3,8 @@ import json
 import pytest
 from openpyxl import Workbook, load_workbook
 from openpyxl.chart import BarChart, Reference
+from openpyxl.formatting.rule import CellIsRule, FormulaRule
+from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.workbook.defined_name import DefinedName
 from excel_mcp.chart import create_chart_in_sheet
 from excel_mcp.server import (
@@ -325,6 +327,75 @@ def test_analyze_range_impact_tracks_this_row_structured_references(tmp_workbook
     assert dependency["references"][0]["structured_reference"] == "People[@Age]"
     assert dependency["references"][0]["intersection_range"] == "B3:B3"
     assert other_row["summary"]["dependent_formula_count"] == 0
+
+
+def test_analyze_range_impact_reports_validation_and_conditional_format_overlaps(tmp_workbook):
+    workbook = load_workbook(tmp_workbook)
+    ws = workbook["Sheet1"]
+    validation = DataValidation(type="whole", operator="between", formula1="18", formula2="65")
+    validation.add("B2:B6")
+    ws.add_data_validation(validation)
+    ws.conditional_formatting.add(
+        "C2:C6",
+        CellIsRule(operator="equal", formula=["\"Turku\""], fill=None),
+    )
+    workbook.save(tmp_workbook)
+    workbook.close()
+
+    result = analyze_range_impact(tmp_workbook, "Sheet1", "B3:C4")
+
+    assert result["summary"]["data_validation_count"] == 1
+    assert result["summary"]["conditional_format_count"] == 1
+    assert result["data_validations"]["count"] == 1
+    assert result["conditional_formats"]["count"] == 1
+    assert result["data_validations"]["sample"][0]["applies_to"] == "B2:B6"
+    assert result["data_validations"]["sample"][0]["intersection_ranges"] == ["B3:B4"]
+    assert result["conditional_formats"]["sample"][0]["applies_to"] == "C2:C6"
+    assert result["conditional_formats"]["sample"][0]["intersection_ranges"] == ["C3:C4"]
+    assert "Selected range overlaps worksheet data validation rules." in result["hints"]
+    assert "Selected range overlaps conditional formatting rules." in result["hints"]
+
+
+def test_analyze_range_impact_tracks_validation_and_conditional_format_dependencies(tmp_workbook):
+    workbook = load_workbook(tmp_workbook)
+    dependent_sheet = workbook.create_sheet("Checks")
+
+    validation = DataValidation(
+        type="whole",
+        operator="between",
+        formula1="Sheet1!$B$2",
+        formula2="Sheet1!$B$4",
+    )
+    validation.add("A1:A3")
+    dependent_sheet.add_data_validation(validation)
+    dependent_sheet.conditional_formatting.add(
+        "B1:B3",
+        FormulaRule(formula=["COUNTIF(Sheet1!$B$2:$B$4,B1)>0"]),
+    )
+    workbook.save(tmp_workbook)
+    workbook.close()
+
+    result = analyze_range_impact(tmp_workbook, "Sheet1", "B2:B4")
+
+    assert result["summary"]["dependent_validation_count"] == 1
+    assert result["summary"]["dependent_conditional_format_count"] == 1
+    assert result["dependent_validations"]["count"] == 1
+    assert result["dependent_conditional_formats"]["count"] == 1
+
+    dependent_validation = result["dependent_validations"]["sample"][0]
+    assert dependent_validation["sheet_name"] == "Checks"
+    assert dependent_validation["applies_to"] == "A1:A3"
+    assert {
+        reference["intersection_range"] for reference in dependent_validation["references"]
+    } == {"B2:B2", "B4:B4"}
+
+    dependent_cf = result["dependent_conditional_formats"]["sample"][0]
+    assert dependent_cf["sheet_name"] == "Checks"
+    assert dependent_cf["applies_to"] == "B1:B3"
+    assert dependent_cf["formula"] == ["COUNTIF(Sheet1!$B$2:$B$4,B1)>0"]
+    assert dependent_cf["references"][0]["intersection_range"] == "B2:B4"
+    assert "Validation rules elsewhere in the workbook reference the selected range." in result["hints"]
+    assert "Conditional formatting rules reference the selected range." in result["hints"]
 
 
 def test_list_named_ranges_includes_local_and_workbook_scope(tmp_workbook):
