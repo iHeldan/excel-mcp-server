@@ -261,6 +261,72 @@ def test_analyze_range_impact_tracks_local_named_range_dependencies(tmp_workbook
     assert dependency["references"][0]["intersection_range"] == "B2:B4"
 
 
+def test_analyze_range_impact_tracks_table_structured_reference_dependencies(tmp_workbook):
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="People")
+
+    workbook = load_workbook(tmp_workbook)
+    ws = workbook["Sheet1"]
+    ws["H2"] = "=SUM(People[Age])"
+    ws["H3"] = "=COUNTA(People[#Headers])"
+    ws["H4"] = "=COUNTA(People[[#All],[Name]])"
+    ws["H5"] = "=SUM(People[[Age]:[City]])"
+    workbook.save(tmp_workbook)
+    workbook.close()
+
+    data_result = analyze_range_impact(tmp_workbook, "Sheet1", "B2:C6")
+    header_result = analyze_range_impact(tmp_workbook, "Sheet1", "A1:C1")
+
+    assert data_result["summary"]["dependent_formula_count"] == 2
+    assert {
+        item["cell"] for item in data_result["dependent_formulas"]["sample"]
+    } == {"H2", "H5"}
+    assert any(
+        reference.get("via_table") == "People" and reference.get("structured_reference") == "People[Age]"
+        for item in data_result["dependent_formulas"]["sample"]
+        for reference in item["references"]
+    )
+    assert any(
+        reference.get("intersection_range") == "B2:C6"
+        for item in data_result["dependent_formulas"]["sample"]
+        for reference in item["references"]
+    )
+
+    assert header_result["summary"]["dependent_formula_count"] == 2
+    assert {item["cell"] for item in header_result["dependent_formulas"]["sample"]} == {"H3", "H4"}
+    assert any(
+        reference.get("structured_reference") == "People[#Headers]"
+        for item in header_result["dependent_formulas"]["sample"]
+        for reference in item["references"]
+    )
+    assert any(
+        reference.get("structured_reference") == "People[[#All],[Name]]"
+        and reference.get("intersection_range") == "A1:A1"
+        for item in header_result["dependent_formulas"]["sample"]
+        for reference in item["references"]
+    )
+
+
+def test_analyze_range_impact_tracks_this_row_structured_references(tmp_workbook):
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="People")
+
+    workbook = load_workbook(tmp_workbook)
+    ws = workbook["Sheet1"]
+    ws["H3"] = "=SUM(People[@Age])"
+    workbook.save(tmp_workbook)
+    workbook.close()
+
+    matching_row = analyze_range_impact(tmp_workbook, "Sheet1", "B3:B3")
+    other_row = analyze_range_impact(tmp_workbook, "Sheet1", "B2:B2")
+
+    assert matching_row["summary"]["dependent_formula_count"] == 1
+    dependency = matching_row["dependent_formulas"]["sample"][0]
+    assert dependency["cell"] == "H3"
+    assert dependency["references"][0]["via_table"] == "People"
+    assert dependency["references"][0]["structured_reference"] == "People[@Age]"
+    assert dependency["references"][0]["intersection_range"] == "B3:B3"
+    assert other_row["summary"]["dependent_formula_count"] == 0
+
+
 def test_list_named_ranges_includes_local_and_workbook_scope(tmp_workbook):
     workbook = load_workbook(tmp_workbook)
     ws = workbook["Sheet1"]

@@ -1,4 +1,5 @@
 import logging
+import re
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,19 @@ from openpyxl.worksheet.worksheet import Worksheet
 from .exceptions import WorkbookError
 
 logger = logging.getLogger(__name__)
+
+_STRUCTURED_REFERENCE_FLAG_RANGE_RE = re.compile(
+    r"^\[\[(?P<flag>#[^,\]]+)\],\[(?P<start>[^\]]+)\]:\[(?P<end>[^\]]+)\]\]$"
+)
+_STRUCTURED_REFERENCE_FLAG_COLUMN_RE = re.compile(
+    r"^\[\[(?P<flag>#[^,\]]+)\],\[(?P<column>[^\]]+)\]\]$"
+)
+_STRUCTURED_REFERENCE_COLUMN_RANGE_RE = re.compile(
+    r"^\[\[(?P<start>[^\]]+)\]:\[(?P<end>[^\]]+)\]\]$"
+)
+_STRUCTURED_REFERENCE_FLAG_ONLY_RE = re.compile(r"^\[(?P<flag>#[^\]]+)\]$")
+_STRUCTURED_REFERENCE_THIS_ROW_COLUMN_RE = re.compile(r"^\[@(?P<column>[^\]]+)\]$")
+_STRUCTURED_REFERENCE_COLUMN_RE = re.compile(r"^\[(?P<column>[^\]]+)\]$")
 
 
 def _get_sheet_usage(ws) -> tuple[int, int, str | None, bool]:
@@ -275,11 +289,198 @@ def _resolve_named_range_references(
     return matches
 
 
+def _find_table_reference(
+    wb: Any,
+    *,
+    table_name: str,
+    sheet_name: str | None = None,
+) -> tuple[str, Worksheet, Any] | None:
+    sheet_names = [sheet_name] if sheet_name is not None else list(wb.sheetnames)
+    for current_sheet_name in sheet_names:
+        if current_sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[current_sheet_name]
+        if _sheet_type(ws) == "chartsheet":
+            continue
+        for table in ws.tables.values():
+            if table.displayName == table_name:
+                return current_sheet_name, ws, table
+    return None
+
+
+def _table_column_lookup(ws: Worksheet, table: Any) -> dict[str, int]:
+    min_col, min_row, max_col, _ = range_boundaries(table.ref)
+    column_names = list(getattr(table, "column_names", []) or [])
+    if len(column_names) == (max_col - min_col + 1):
+        return {
+            str(column_name): min_col + offset
+            for offset, column_name in enumerate(column_names)
+        }
+
+    return {
+        str(ws.cell(row=min_row, column=column_index).value): column_index
+        for column_index in range(min_col, max_col + 1)
+    }
+
+
+def _normalize_structured_flag(flag: str | None) -> str:
+    if not flag:
+        return "data"
+    normalized = flag.strip().lower()
+    if normalized.startswith("#"):
+        normalized = normalized[1:]
+    return normalized.replace(" ", "")
+
+
+def _parse_structured_reference(
+    local_reference: str,
+) -> tuple[str, dict[str, Any]] | None:
+    if "[" not in local_reference or not local_reference.endswith("]"):
+        return None
+
+    table_name, spec = local_reference.split("[", 1)
+    table_name = table_name.strip()
+    if not table_name:
+        return None
+    spec = f"[{spec}"
+
+    match = _STRUCTURED_REFERENCE_FLAG_RANGE_RE.fullmatch(spec)
+    if match:
+        return table_name, {
+            "row_selector": _normalize_structured_flag(match.group("flag")),
+            "start_column": match.group("start"),
+            "end_column": match.group("end"),
+        }
+
+    match = _STRUCTURED_REFERENCE_FLAG_COLUMN_RE.fullmatch(spec)
+    if match:
+        return table_name, {
+            "row_selector": _normalize_structured_flag(match.group("flag")),
+            "start_column": match.group("column"),
+            "end_column": match.group("column"),
+        }
+
+    match = _STRUCTURED_REFERENCE_COLUMN_RANGE_RE.fullmatch(spec)
+    if match:
+        return table_name, {
+            "row_selector": "data",
+            "start_column": match.group("start"),
+            "end_column": match.group("end"),
+        }
+
+    match = _STRUCTURED_REFERENCE_FLAG_ONLY_RE.fullmatch(spec)
+    if match:
+        return table_name, {
+            "row_selector": _normalize_structured_flag(match.group("flag")),
+            "start_column": None,
+            "end_column": None,
+        }
+
+    match = _STRUCTURED_REFERENCE_THIS_ROW_COLUMN_RE.fullmatch(spec)
+    if match:
+        return table_name, {
+            "row_selector": "thisrow",
+            "start_column": match.group("column"),
+            "end_column": match.group("column"),
+        }
+
+    match = _STRUCTURED_REFERENCE_COLUMN_RE.fullmatch(spec)
+    if match:
+        return table_name, {
+            "row_selector": "data",
+            "start_column": match.group("column"),
+            "end_column": match.group("column"),
+        }
+
+    return None
+
+
+def _resolve_table_structured_reference(
+    wb: Any,
+    *,
+    local_reference: str,
+    formula_sheet_name: str,
+    formula_row: int,
+    scope_sheet_name: str | None,
+    target_sheet: str,
+    target_bounds: tuple[int, int, int, int],
+) -> list[dict[str, Any]]:
+    parsed_reference = _parse_structured_reference(local_reference)
+    if parsed_reference is None:
+        return []
+
+    table_name, reference_parts = parsed_reference
+    table_match = _find_table_reference(wb, table_name=table_name, sheet_name=scope_sheet_name)
+    if table_match is None:
+        return []
+
+    table_sheet_name, table_ws, table = table_match
+    if table_sheet_name != target_sheet:
+        return []
+
+    min_col, min_row, max_col, max_row = range_boundaries(table.ref)
+    header_row_count = int(table.headerRowCount or 0)
+    totals_row_count = int(table.totalsRowCount or 0)
+    data_start_row = min_row + header_row_count
+    data_end_row = max_row - totals_row_count
+
+    row_selector = reference_parts["row_selector"]
+    if row_selector == "all":
+        row_start, row_end = min_row, max_row
+    elif row_selector == "data":
+        row_start, row_end = data_start_row, data_end_row
+    elif row_selector == "headers":
+        if header_row_count < 1:
+            return []
+        row_start, row_end = min_row, min_row + header_row_count - 1
+    elif row_selector == "totals":
+        if totals_row_count < 1:
+            return []
+        row_start, row_end = max_row - totals_row_count + 1, max_row
+    elif row_selector == "thisrow":
+        if table_sheet_name != formula_sheet_name or not (data_start_row <= formula_row <= data_end_row):
+            return []
+        row_start = row_end = formula_row
+    else:
+        return []
+
+    if row_start > row_end:
+        return []
+
+    start_column_name = reference_parts["start_column"]
+    end_column_name = reference_parts["end_column"]
+    if start_column_name is None:
+        column_start, column_end = min_col, max_col
+    else:
+        column_lookup = _table_column_lookup(table_ws, table)
+        if start_column_name not in column_lookup or end_column_name not in column_lookup:
+            return []
+        column_start = column_lookup[start_column_name]
+        column_end = column_lookup[end_column_name]
+        if column_start > column_end:
+            column_start, column_end = column_end, column_start
+
+    reference_bounds = (row_start, column_start, row_end, column_end)
+    intersection = _intersection_bounds(target_bounds, reference_bounds)
+    if intersection is None:
+        return []
+
+    return [
+        {
+            "reference": f"{table_sheet_name}!{_bounds_to_range(*reference_bounds)}",
+            "intersection_range": _bounds_to_range(*intersection),
+            "via_table": table.displayName,
+            "structured_reference": local_reference,
+        }
+    ]
+
+
 def _resolve_formula_token_references(
     wb: Any,
     *,
     token_value: str,
     formula_sheet_name: str,
+    formula_row: int,
     target_sheet: str,
     target_bounds: tuple[int, int, int, int],
 ) -> list[dict[str, Any]]:
@@ -288,6 +489,18 @@ def _resolve_formula_token_references(
     if "!" in token_value:
         range_sheet, local_reference = token_value.rsplit("!", 1)
         reference_scope_sheet = range_sheet.strip().strip("'")
+
+    table_matches = _resolve_table_structured_reference(
+        wb,
+        local_reference=local_reference,
+        formula_sheet_name=formula_sheet_name,
+        formula_row=formula_row,
+        scope_sheet_name=reference_scope_sheet,
+        target_sheet=target_sheet,
+        target_bounds=target_bounds,
+    )
+    if table_matches:
+        return table_matches
 
     reference_sheet_name = formula_sheet_name if reference_scope_sheet is None else reference_scope_sheet
     if reference_sheet_name == target_sheet and reference_sheet_name in wb.sheetnames:
@@ -368,6 +581,7 @@ def _extract_formula_dependencies(
                             wb,
                             token_value=token_value,
                             formula_sheet_name=formula_sheet_name,
+                            formula_row=cell.row,
                             target_sheet=target_sheet,
                             target_bounds=target_bounds,
                         )
