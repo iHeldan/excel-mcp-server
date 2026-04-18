@@ -11,6 +11,21 @@ from .workbook import require_worksheet, safe_workbook
 logger = logging.getLogger(__name__)
 
 
+def _validate_positive_integer(
+    value: Optional[int],
+    *,
+    argument_name: str,
+    allow_none: bool = False,
+) -> Optional[int]:
+    if value is None:
+        if allow_none:
+            return None
+        raise DataError(f"{argument_name} must be a positive integer")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise DataError(f"{argument_name} must be a positive integer")
+    return value
+
+
 def _get_table_style_details(table: Table) -> dict[str, Any]:
     style_name = None
     show_first_column = None
@@ -294,10 +309,8 @@ def read_excel_table(
     hints as the compact worksheet table readers.
     """
     try:
-        if start_row <= 0:
-            raise DataError("start_row must be a positive integer")
-        if max_rows is not None and max_rows <= 0:
-            raise DataError("max_rows must be a positive integer")
+        _validate_positive_integer(start_row, argument_name="start_row")
+        _validate_positive_integer(max_rows, argument_name="max_rows", allow_none=True)
 
         with safe_workbook(filepath) as wb:
             current_sheet_name, ws, table = _find_table(wb, table_name, sheet_name=sheet_name)

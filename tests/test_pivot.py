@@ -130,6 +130,16 @@ def test_pivot_count_aggregation(pivot_workbook):
     wb.close()
 
 
+def test_pivot_count_aggregation_supports_text_fields(pivot_workbook):
+    create_pivot_table(pivot_workbook, "Data", "A1:D6", rows=["Region"], values=["Product"], agg_func="count")
+    wb = load_workbook(pivot_workbook)
+    pivot_ws = wb["Data_pivot"]
+    vals = {pivot_ws[f"A{r}"].value: pivot_ws[f"B{r}"].value for r in range(2, 4)}
+    assert vals["North"] == 3
+    assert vals["South"] == 2
+    wb.close()
+
+
 def test_pivot_replaces_existing_pivot_sheet(pivot_workbook):
     create_pivot_table(pivot_workbook, "Data", "A1:D6", rows=["Region"], values=["Sales"])
     # Run again — should replace, not fail

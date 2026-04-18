@@ -36,6 +36,7 @@ from excel_mcp.sheet import (
     unmerge_range,
 )
 from excel_mcp.tables import create_excel_table
+from excel_mcp.exceptions import ValidationError
 from excel_mcp.workbook import list_named_ranges
 
 
@@ -116,6 +117,25 @@ def test_unmerge_range_can_include_changes_explicitly(tmp_workbook):
     result = unmerge_range(tmp_workbook, "Sheet1", "A1", "B1", include_changes=True)
 
     assert result["changes"][0]["range"] == "A1:B1"
+
+
+@pytest.mark.parametrize(
+    ("operation", "args", "error_message"),
+    [
+        (insert_row, ("Sheet1", True), "start_row must be a positive integer"),
+        (insert_cols, ("Sheet1", True), "start_col must be a positive integer"),
+        (delete_rows, ("Sheet1", True), "start_row must be a positive integer"),
+        (delete_cols, ("Sheet1", True), "start_col must be a positive integer"),
+    ],
+)
+def test_row_and_column_operations_reject_boolean_indexes(
+    tmp_workbook,
+    operation,
+    args,
+    error_message,
+):
+    with pytest.raises(ValidationError, match=error_message):
+        operation(tmp_workbook, *args, dry_run=True)
 
 
 def test_set_autofilter_infers_used_range(tmp_workbook):

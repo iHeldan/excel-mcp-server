@@ -52,6 +52,12 @@ def _attach_changes(
         payload["changes"] = changes
     return payload
 
+
+def _validate_positive_integer(value: Any, *, argument_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValidationError(f"{argument_name} must be a positive integer")
+    return value
+
 def copy_sheet(filepath: str, source_sheet: str, target_sheet: str) -> Dict[str, Any]:
     """Copy a worksheet within the same workbook."""
     try:
@@ -1257,10 +1263,8 @@ def insert_row(
             )
 
             # Validate parameters
-            if start_row < 1:
-                raise ValidationError("Start row must be 1 or greater")
-            if count < 1:
-                raise ValidationError("Count must be 1 or greater")
+            _validate_positive_integer(start_row, argument_name="start_row")
+            _validate_positive_integer(count, argument_name="count")
 
             _raise_table_structure_guard(
                 operation=f"insert rows starting at row {start_row}",
@@ -1306,10 +1310,8 @@ def insert_cols(
             )
 
             # Validate parameters
-            if start_col < 1:
-                raise ValidationError("Start column must be 1 or greater")
-            if count < 1:
-                raise ValidationError("Count must be 1 or greater")
+            _validate_positive_integer(start_col, argument_name="start_col")
+            _validate_positive_integer(count, argument_name="count")
 
             _raise_table_structure_guard(
                 operation=f"insert columns starting at column {start_col}",
@@ -1355,10 +1357,8 @@ def delete_rows(
             )
 
             # Validate parameters
-            if start_row < 1:
-                raise ValidationError("Start row must be 1 or greater")
-            if count < 1:
-                raise ValidationError("Count must be 1 or greater")
+            _validate_positive_integer(start_row, argument_name="start_row")
+            _validate_positive_integer(count, argument_name="count")
             if start_row > worksheet.max_row:
                 raise ValidationError(f"Start row {start_row} exceeds worksheet bounds (max row: {worksheet.max_row})")
 
@@ -1406,10 +1406,8 @@ def delete_cols(
             )
 
             # Validate parameters
-            if start_col < 1:
-                raise ValidationError("Start column must be 1 or greater")
-            if count < 1:
-                raise ValidationError("Count must be 1 or greater")
+            _validate_positive_integer(start_col, argument_name="start_col")
+            _validate_positive_integer(count, argument_name="count")
             if start_col > worksheet.max_column:
                 raise ValidationError(f"Start column {start_col} exceeds worksheet bounds (max column: {worksheet.max_column})")
 

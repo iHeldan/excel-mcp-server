@@ -1,3 +1,4 @@
+import base64
 import json
 
 import pytest
@@ -266,6 +267,31 @@ def test_read_excel_range_rejects_chart_sheet_with_clear_error(tmp_path):
 
     with pytest.raises(DataError, match="Sheet 'Charts' is a chartsheet"):
         read_excel_range(filepath, "Charts", start_cell="A1", end_cell="B2")
+
+
+def test_read_as_table_rejects_boolean_max_rows(tmp_workbook):
+    with pytest.raises(DataError, match="max_rows must be a positive integer"):
+        read_as_table(tmp_workbook, "Sheet1", max_rows=True)
+
+
+def test_read_with_metadata_rejects_boolean_max_rows(tmp_workbook):
+    with pytest.raises(DataError, match="max_rows must be a positive integer"):
+        read_excel_range_with_metadata(tmp_workbook, "Sheet1", start_cell="A1", end_cell="C5", max_rows=True)
+
+
+def test_read_with_metadata_rejects_cursor_with_boolean_limits(tmp_workbook):
+    payload = {
+        "v": 1,
+        "start_cell": "A2",
+        "end_cell": "A5",
+        "max_rows": True,
+    }
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).decode("ascii").rstrip("=")
+
+    with pytest.raises(DataError, match="Invalid cursor"):
+        read_excel_range_with_metadata(tmp_workbook, "Sheet1", cursor=encoded)
 
 def test_search_cells_finds_exact_match(tmp_workbook):
     results = search_cells(tmp_workbook, "Sheet1", "Alice")

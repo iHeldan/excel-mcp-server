@@ -311,16 +311,19 @@ def _filter_data(data: list[dict], row_filters: dict, col_filters: dict) -> list
 
 def _aggregate_values(data: list[dict], field: str, agg_func: str) -> float:
     """Aggregate values using the specified function."""
-    values = [record[field] for record in data if field in record and isinstance(record[field], (int, float))]
+    present_values = [record[field] for record in data if field in record and record[field] is not None]
+
+    if agg_func == "count":
+        return len(present_values)
+
+    values = [value for value in present_values if isinstance(value, (int, float))]
     if not values:
         return 0
-        
+
     if agg_func == "sum":
         return sum(values)
     elif agg_func == "average":
         return sum(values) / len(values)
-    elif agg_func == "count":
-        return len(values)
     elif agg_func == "min":
         return min(values)
     elif agg_func == "max":

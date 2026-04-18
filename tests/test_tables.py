@@ -338,6 +338,13 @@ def test_read_excel_table_rejects_non_positive_start_row(tmp_workbook):
         read_excel_table(tmp_workbook, "Customers", start_row=0)
 
 
+def test_read_excel_table_rejects_boolean_max_rows(tmp_workbook):
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
+
+    with pytest.raises(DataError, match="max_rows must be a positive integer"):
+        read_excel_table(tmp_workbook, "Customers", max_rows=True)
+
+
 def test_read_excel_table_can_return_records_and_schema(tmp_workbook):
     create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
 

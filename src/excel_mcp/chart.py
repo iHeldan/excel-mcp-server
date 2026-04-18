@@ -156,8 +156,17 @@ def _extract_chart_dimensions(chart: Any) -> tuple[Optional[float], Optional[flo
     anchor = getattr(chart, "anchor", None)
     ext = getattr(anchor, "ext", None)
     if ext is not None and getattr(ext, "cx", None) is not None and getattr(ext, "cy", None) is not None:
-        return EMU_to_cm(ext.cx), EMU_to_cm(ext.cy)
-    return getattr(chart, "width", None), getattr(chart, "height", None)
+        width = EMU_to_cm(ext.cx)
+        height = EMU_to_cm(ext.cy)
+    else:
+        width = getattr(chart, "width", None)
+        height = getattr(chart, "height", None)
+
+    if width is not None and width <= 0:
+        width = None
+    if height is not None and height <= 0:
+        height = None
+    return width, height
 
 
 def _bounds_to_range(min_row: int, min_col: int, max_row: int, max_col: int) -> str:
@@ -415,6 +424,15 @@ def _search_window(
     search_rows: Optional[int],
     search_columns: Optional[int],
 ) -> tuple[int, int]:
+    if search_rows is not None and (
+        isinstance(search_rows, bool) or not isinstance(search_rows, int) or search_rows <= 0
+    ):
+        raise ValidationError("search_rows must be a positive integer")
+    if search_columns is not None and (
+        isinstance(search_columns, bool) or not isinstance(search_columns, int) or search_columns <= 0
+    ):
+        raise ValidationError("search_columns must be a positive integer")
+
     occupied_bounds = _occupied_layout_bounds(worksheet)
     max_occupied_row = max(
         (bounds[2] for values in occupied_bounds.values() for bounds in values),
@@ -451,7 +469,14 @@ def _candidate_bounds(
 
     if min_rows is None or min_cols is None:
         raise ValidationError("Provide both min_rows and min_cols when width/height are omitted")
-    if min_rows <= 0 or min_cols <= 0:
+    if (
+        isinstance(min_rows, bool)
+        or not isinstance(min_rows, int)
+        or min_rows <= 0
+        or isinstance(min_cols, bool)
+        or not isinstance(min_cols, int)
+        or min_cols <= 0
+    ):
         raise ValidationError("min_rows and min_cols must be positive integers")
 
     start_row, start_col, _, _ = parse_cell_range(anchor_cell, anchor_cell)
@@ -474,10 +499,17 @@ def _find_free_canvas_slots_in_worksheet(
     padding_rows: int = 0,
     padding_columns: int = 0,
 ) -> dict[str, Any]:
-    if limit <= 0:
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
         raise ValidationError("limit must be a positive integer")
     _validate_target_cell(origin_cell)
-    if padding_rows < 0 or padding_columns < 0:
+    if (
+        isinstance(padding_rows, bool)
+        or not isinstance(padding_rows, int)
+        or isinstance(padding_columns, bool)
+        or not isinstance(padding_columns, int)
+        or padding_rows < 0
+        or padding_columns < 0
+    ):
         raise ValidationError("padding_rows and padding_columns must be non-negative integers")
 
     origin_row, origin_col, _, _ = parse_cell_range(origin_cell, origin_cell)
@@ -651,6 +683,8 @@ def _resolve_chart_anchor(
 
     def _coerce_padding(name: str, default: int) -> int:
         raw_value = placement.get(name, default)
+        if isinstance(raw_value, bool):
+            raise ValidationError(f"placement.{name} must be a non-negative integer")
         try:
             value = int(raw_value)
         except (TypeError, ValueError) as exc:
@@ -669,6 +703,8 @@ def _resolve_chart_anchor(
         def _coerce_optional_positive_int(raw_value: Any, name: str) -> Optional[int]:
             if raw_value is None:
                 return None
+            if isinstance(raw_value, bool):
+                raise ValidationError(f"placement.{name} must be a positive integer")
             try:
                 value = int(raw_value)
             except (TypeError, ValueError) as exc:
@@ -939,6 +975,8 @@ def _resolve_chart_dimensions(
     def _coerce_dimension(raw_value: Any, name: str, default: float) -> float:
         if raw_value is None:
             return default
+        if isinstance(raw_value, bool):
+            raise ValidationError(f"{name} must be a positive number")
         try:
             value = float(raw_value)
         except (TypeError, ValueError) as exc:

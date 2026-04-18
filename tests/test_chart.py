@@ -1,7 +1,8 @@
 import json
 
 import pytest
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
+from openpyxl.chart import BarChart, Reference
 from openpyxl.utils.cell import range_boundaries
 
 from excel_mcp.chart import (
@@ -202,6 +203,37 @@ def test_chart_dimensions_fallback_to_legacy_style_keys(chart_workbook):
     created_chart = next(chart for chart in charts if chart["anchor"] == "E1")
     assert created_chart["width"] == 11
     assert created_chart["height"] == 6.5
+
+
+def test_list_charts_omits_zero_dimensions_for_chartsheets(tmp_path):
+    filepath = str(tmp_path / "chartsheet-dimensions.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    for row in [("Month", "Value"), ("Jan", 10), ("Feb", 20)]:
+        ws.append(row)
+
+    chart = BarChart()
+    data = Reference(ws, min_col=2, min_row=1, max_row=3)
+    categories = Reference(ws, min_col=1, min_row=2, max_row=3)
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(categories)
+
+    chart_sheet = wb.create_chartsheet("Charts")
+    chart_sheet.add_chart(chart)
+    wb.save(filepath)
+    wb.close()
+
+    charts = list_charts(filepath, sheet_name="Charts")
+
+    assert len(charts) == 1
+    assert "width" not in charts[0]
+    assert "height" not in charts[0]
+
+
+def test_find_free_canvas_rejects_boolean_limit(chart_workbook):
+    with pytest.raises(ValidationError, match="limit must be a positive integer"):
+        find_free_canvas_slots(chart_workbook, "Sales", limit=True)
 
 
 def test_create_chart_from_series_supports_non_contiguous_ranges(chart_workbook):
@@ -621,6 +653,16 @@ def test_chart_invalid_data_range(chart_workbook):
 def test_chart_rejects_invalid_dimensions(chart_workbook):
     with pytest.raises(ValidationError, match="width must be a positive number"):
         create_chart_in_sheet(chart_workbook, "Sales", "A1:B5", "bar", "E1", width=0)
+
+
+def test_chart_rejects_boolean_dimensions(chart_workbook):
+    with pytest.raises(ValidationError, match="width must be a positive number"):
+        create_chart_in_sheet(chart_workbook, "Sales", "A1:B5", "bar", "E1", width=True)
+
+
+def test_find_free_canvas_rejects_boolean_dimensions(chart_workbook):
+    with pytest.raises(ValidationError, match="width must be a positive number"):
+        find_free_canvas_slots(chart_workbook, "Sales", width=True, height=5, limit=1)
 
 
 def test_chart_rejects_both_data_range_and_series(chart_workbook):

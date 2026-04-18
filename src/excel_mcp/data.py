@@ -47,6 +47,21 @@ def _validate_row_mode(row_mode: str) -> None:
         raise DataError("row_mode must be 'arrays' or 'objects'")
 
 
+def _validate_positive_integer(
+    value: Optional[int],
+    *,
+    argument_name: str,
+    allow_none: bool = False,
+) -> Optional[int]:
+    if value is None:
+        if allow_none:
+            return None
+        raise DataError(f"{argument_name} must be a positive integer")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise DataError(f"{argument_name} must be a positive integer")
+    return value
+
+
 def _field_name_from_header(header: Any, index: int) -> str:
     raw_header = "" if header is None else str(header).strip()
     if not raw_header:
@@ -698,10 +713,8 @@ def describe_dataset(
 ) -> Dict[str, Any]:
     """Describe the most likely dataset shape for a worksheet or native Excel table."""
     try:
-        if header_row <= 0:
-            raise DataError("header_row must be a positive integer")
-        if sample_rows <= 0:
-            raise DataError("sample_rows must be a positive integer")
+        _validate_positive_integer(header_row, argument_name="header_row")
+        _validate_positive_integer(sample_rows, argument_name="sample_rows")
 
         if table_name is not None:
             return _describe_table_dataset(
@@ -923,9 +936,13 @@ def _decode_range_read_cursor(cursor: str) -> Dict[str, Any]:
 
     max_rows = payload.get("max_rows")
     max_cols = payload.get("max_cols")
-    if max_rows is not None and (not isinstance(max_rows, int) or max_rows <= 0):
+    if max_rows is not None and (
+        isinstance(max_rows, bool) or not isinstance(max_rows, int) or max_rows <= 0
+    ):
         raise DataError("Invalid cursor")
-    if max_cols is not None and (not isinstance(max_cols, int) or max_cols <= 0):
+    if max_cols is not None and (
+        isinstance(max_cols, bool) or not isinstance(max_cols, int) or max_cols <= 0
+    ):
         raise DataError("Invalid cursor")
 
     return {
@@ -1199,10 +1216,8 @@ def read_excel_range_with_metadata(
             if max_cols is None:
                 max_cols = cursor_state["max_cols"]
 
-        if max_rows is not None and max_rows <= 0:
-            raise DataError("max_rows must be a positive integer")
-        if max_cols is not None and max_cols <= 0:
-            raise DataError("max_cols must be a positive integer")
+        _validate_positive_integer(max_rows, argument_name="max_rows", allow_none=True)
+        _validate_positive_integer(max_cols, argument_name="max_cols", allow_none=True)
 
         with safe_workbook(str(filepath)) as wb:
             ws = require_worksheet(
@@ -1413,6 +1428,7 @@ def _read_table_from_worksheet(
     row_mode: str = "arrays",
     infer_schema: bool = False,
 ) -> Dict[str, Any]:
+    _validate_positive_integer(header_row, argument_name="header_row")
     start_col_idx = _column_index(start_col, argument_name="start_col")
     if end_col:
         end_col_idx = _column_index(end_col, argument_name="end_col")
@@ -1420,10 +1436,10 @@ def _read_table_from_worksheet(
         end_col_idx = ws.max_column
     if end_col_idx < start_col_idx:
         raise DataError("end_col must be greater than or equal to start_col")
-    if max_rows is not None and max_rows <= 0:
-        raise DataError("max_rows must be a positive integer")
+    _validate_positive_integer(max_rows, argument_name="max_rows", allow_none=True)
 
     effective_start_row = header_row + 1 if start_row is None else start_row
+    _validate_positive_integer(effective_start_row, argument_name="start_row")
     if effective_start_row <= header_row:
         raise DataError("start_row must be greater than header_row")
 
