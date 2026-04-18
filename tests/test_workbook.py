@@ -9,6 +9,7 @@ from openpyxl.workbook.defined_name import DefinedName
 from excel_mcp.chart import create_chart_in_sheet
 from excel_mcp.server import (
     analyze_range_impact as analyze_range_impact_tool,
+    audit_workbook as audit_workbook_tool,
     get_workbook_metadata as get_workbook_metadata_tool,
     list_all_sheets as list_all_sheets_tool,
     profile_workbook as profile_workbook_tool,
@@ -16,6 +17,7 @@ from excel_mcp.server import (
 from excel_mcp.tables import create_excel_table
 from excel_mcp.workbook import (
     analyze_range_impact,
+    audit_workbook,
     get_or_create_workbook,
     get_workbook_info,
     list_named_ranges,
@@ -169,6 +171,116 @@ def test_profile_workbook_tool_returns_json_envelope(tmp_workbook):
 
     assert payload["operation"] == "profile_workbook"
     assert payload["data"]["sheet_count"] == 1
+
+
+def test_audit_workbook_reports_clean_structured_workbook(tmp_workbook):
+    result = audit_workbook(tmp_workbook)
+
+    assert result["summary"]["risk_level"] == "low"
+    assert result["summary"]["finding_count"] == 0
+    assert result["summary"]["worksheet_count"] == 1
+    assert result["summary"]["chartsheet_count"] == 0
+    assert result["findings"]["count"] == 0
+    assert result["findings"]["sample"] == []
+    assert result["sheet_assessments"] == [
+        {
+            "sheet_name": "Sheet1",
+            "sheet_type": "worksheet",
+            "visibility": "visible",
+            "used_range": "A1:C6",
+            "rows": 6,
+            "columns": 3,
+            "dataset_kind": "worksheet_table",
+            "recommended_read_tool": "quick_read",
+            "table_count": 0,
+            "chart_count": 0,
+            "finding_count": 0,
+            "highest_severity": None,
+        }
+    ]
+    assert result["recommended_actions"] == []
+
+
+def test_audit_workbook_reports_high_signal_findings(tmp_path):
+    filepath = str(tmp_path / "audit.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws.append(["Name", "Value", "Status"])
+    ws.append(["Alice", 10, "ok"])
+    ws["D2"] = "=SUM(#REF!)"
+    ws["E2"] = "#DIV/0!"
+    ws["E2"].data_type = "e"
+
+    raw = wb.create_sheet("Raw")
+    raw.append(["ID", "ID", None])
+    raw.append([1, 2, 3])
+
+    hidden = wb.create_sheet("Hidden")
+    hidden.sheet_state = "veryHidden"
+
+    wb.defined_names["BrokenRange"] = DefinedName(
+        "BrokenRange",
+        attr_text="MissingSheet!$A$1:$A$2",
+    )
+    wb.save(filepath)
+    wb.close()
+
+    result = audit_workbook(filepath)
+
+    assert result["summary"]["risk_level"] == "high"
+    assert result["summary"]["high_count"] >= 3
+    assert result["summary"]["medium_count"] >= 2
+    assert result["summary"]["hidden_sheet_count"] == 1
+    assert result["summary"]["worksheet_count"] == 3
+
+    by_code = {item["code"]: item["count"] for item in result["findings"]["by_code"]}
+    assert by_code["broken_formula_reference"] == 1
+    assert by_code["error_cells_present"] == 1
+    assert by_code["duplicate_headers"] == 1
+    assert by_code["blank_headers"] == 2
+    assert by_code["hidden_sheet"] == 1
+    assert by_code["named_range_missing_sheet"] == 1
+
+    sample_by_code = {item["code"]: item for item in result["findings"]["sample"]}
+    assert sample_by_code["broken_formula_reference"]["sheet_name"] == "Data"
+    assert sample_by_code["broken_formula_reference"]["details"]["sample"] == ["D2"]
+    assert sample_by_code["error_cells_present"]["details"]["sample"] == ["E2"]
+    assert sample_by_code["duplicate_headers"]["sheet_name"] == "Raw"
+    assert sample_by_code["blank_headers"]["sheet_name"] == "Raw"
+    assert sample_by_code["hidden_sheet"]["details"]["visibility"] == "veryHidden"
+    assert sample_by_code["named_range_missing_sheet"]["details"]["missing_sheets"] == ["MissingSheet"]
+
+    assessments = {item["sheet_name"]: item for item in result["sheet_assessments"]}
+    assert assessments["Data"]["highest_severity"] == "high"
+    assert assessments["Raw"]["highest_severity"] == "medium"
+    assert assessments["Hidden"]["highest_severity"] == "medium"
+
+
+def test_audit_workbook_handles_complex_workbook_orientation(complex_workbook):
+    result = audit_workbook(complex_workbook)
+
+    assert result["summary"]["chartsheet_count"] == 1
+    assert result["summary"]["layout_like_sheet_count"] == 1
+
+    assessments = {item["sheet_name"]: item for item in result["sheet_assessments"]}
+    assert assessments["Charts"]["dataset_kind"] == "chartsheet"
+    assert assessments["Charts"]["recommended_read_tool"] == "list_charts"
+    assert assessments["Dashboard"]["dataset_kind"] == "layout_like_sheet"
+    assert assessments["Dashboard"]["recommended_read_tool"] == "profile_workbook"
+    assert assessments["Data"]["recommended_read_tool"] == "read_excel_table"
+
+
+def test_audit_workbook_tool_returns_json_envelope(tmp_workbook):
+    payload = _load_tool_payload(audit_workbook_tool(tmp_workbook))
+
+    assert payload["operation"] == "audit_workbook"
+    assert payload["data"]["summary"]["finding_count"] == 0
+
+
+def test_audit_workbook_rejects_boolean_sample_limit(tmp_workbook):
+    with pytest.raises(Exception, match="sample_limit must be a positive integer"):
+        audit_workbook(tmp_workbook, sample_limit=True)
 
 
 def test_analyze_range_impact_reports_overlapping_structures(tmp_workbook):

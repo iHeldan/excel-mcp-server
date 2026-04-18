@@ -1,5 +1,6 @@
 import logging
 import re
+from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,9 @@ from .exceptions import WorkbookError
 
 logger = logging.getLogger(__name__)
 
+AUDIT_SAMPLE_ROWS = 25
+AUDIT_LARGE_DATASET_THRESHOLD = 1000
+AUDIT_SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3}
 _STRUCTURED_REFERENCE_FLAG_RANGE_RE = re.compile(
     r"^\[\[(?P<flag>#[^,\]]+)\],\[(?P<start>[^\]]+)\]:\[(?P<end>[^\]]+)\]\]$"
 )
@@ -965,6 +969,252 @@ def _sheet_type(ws: Any) -> str:
     return "chartsheet" if ws.__class__.__name__ == "Chartsheet" else "worksheet"
 
 
+def _audit_finding(
+    severity: str,
+    code: str,
+    message: str,
+    *,
+    sheet_name: str | None = None,
+    recommendation: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    finding = {
+        "severity": severity,
+        "code": code,
+        "message": message,
+    }
+    if sheet_name is not None:
+        finding["sheet_name"] = sheet_name
+    if recommendation is not None:
+        finding["recommendation"] = recommendation
+    if details:
+        finding["details"] = details
+    return finding
+
+
+def _highest_severity(findings: list[dict[str, Any]]) -> str | None:
+    if not findings:
+        return None
+    return max(
+        (finding["severity"] for finding in findings),
+        key=lambda severity: AUDIT_SEVERITY_RANK.get(severity, 0),
+    )
+
+
+def _cells_with_broken_formula_references(ws: Worksheet) -> list[str]:
+    cells: list[str] = []
+    for row in ws.iter_rows():
+        for cell in row:
+            if isinstance(cell.value, str) and cell.value.startswith("=") and "#REF!" in cell.value.upper():
+                cells.append(cell.coordinate)
+    return cells
+
+
+def _cells_with_error_values(ws: Worksheet) -> list[str]:
+    cells: list[str] = []
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.data_type == "e":
+                cells.append(cell.coordinate)
+    return cells
+
+
+def _broken_validation_rules(ws: Worksheet) -> list[dict[str, Any]]:
+    broken_rules: list[dict[str, Any]] = []
+    for validation in getattr(getattr(ws, "data_validations", None), "dataValidation", []):
+        formulas = [validation.formula1, validation.formula2]
+        if not any(formula and "#REF!" in str(formula).upper() for formula in formulas):
+            continue
+        broken_rules.append(
+            {
+                "applies_to": str(validation.sqref),
+                "validation_type": validation.type,
+                "formula1": validation.formula1 or None,
+                "formula2": validation.formula2 or None,
+            }
+        )
+    return broken_rules
+
+
+def _broken_conditional_format_rules(ws: Worksheet) -> list[dict[str, Any]]:
+    broken_rules: list[dict[str, Any]] = []
+    for conditional_format, rules in getattr(ws.conditional_formatting, "_cf_rules", {}).items():
+        for rule in rules:
+            formulas = list(getattr(rule, "formula", None) or [])
+            if not any("#REF!" in str(formula).upper() for formula in formulas):
+                continue
+            broken_rules.append(
+                {
+                    "applies_to": str(conditional_format.sqref),
+                    "rule_type": getattr(rule, "type", None),
+                    "formula": formulas,
+                }
+            )
+    return broken_rules
+
+
+def _worksheet_audit_assessment(
+    ws: Worksheet,
+    *,
+    sheet_name: str,
+    header_row: int,
+) -> dict[str, Any]:
+    from .data import (
+        _header_profile,
+        _read_table_from_worksheet,
+        _table_dominates_sheet,
+        _worksheet_dataset_kind,
+    )
+    from .tables import _build_table_metadata
+
+    rows, columns, column_range, is_empty = _get_sheet_usage(ws)
+    used_range = _get_used_range(ws)
+    chart_count = len(getattr(ws, "_charts", []))
+    merged_range_count = len(ws.merged_cells.ranges)
+    native_tables = [
+        _build_table_metadata(sheet_name, ws, table)
+        for table in ws.tables.values()
+    ]
+
+    if is_empty:
+        return {
+            "sheet_name": sheet_name,
+            "sheet_type": "worksheet",
+            "rows": rows,
+            "columns": columns,
+            "column_range": column_range,
+            "used_range": used_range,
+            "dataset_kind": "empty_sheet",
+            "recommended_read_tool": "quick_read",
+            "header_profile": {
+                "total_headers": 0,
+                "non_empty_headers": 0,
+                "blank_headers": 0,
+                "string_headers": 0,
+                "duplicate_headers": 0,
+                "score": 0.0,
+                "confidence": "low",
+            },
+            "total_rows": 0,
+            "chart_count": chart_count,
+            "merged_range_count": merged_range_count,
+            "native_tables": native_tables,
+            "dominant_table": None,
+        }
+
+    sample = _read_table_from_worksheet(
+        ws,
+        sheet_name,
+        header_row=header_row,
+        max_rows=AUDIT_SAMPLE_ROWS,
+        include_headers=True,
+        row_mode="arrays",
+        infer_schema=False,
+    )
+    header_profile = _header_profile(sample["headers"])
+    dataset_kind = _worksheet_dataset_kind(
+        used_range=used_range,
+        total_rows=sample["total_rows"],
+        header_confidence=header_profile["confidence"],
+        chart_count=chart_count,
+        merged_range_count=merged_range_count,
+    )
+    dominant_table = _table_dominates_sheet(
+        {
+            "native_tables": [
+                {
+                    "table_name": table["table_name"],
+                    "data_row_count": table["data_row_count"],
+                    "column_count": table["column_count"],
+                }
+                for table in native_tables
+            ],
+            "total_rows": sample["total_rows"],
+            "column_count": len(sample["headers"]),
+        }
+    )
+    preferred_table = dominant_table
+    if preferred_table is None and len(native_tables) == 1 and len(sample["headers"]) > 0:
+        sole_table = native_tables[0]
+        row_coverage = sole_table["data_row_count"] / sample["total_rows"] if sample["total_rows"] else 0.0
+        col_coverage = sole_table["column_count"] / len(sample["headers"])
+        if row_coverage >= 0.8 and col_coverage >= 0.5:
+            preferred_table = sole_table
+
+    if preferred_table is not None:
+        recommended_read_tool = "read_excel_table"
+    elif dataset_kind == "layout_like_sheet":
+        recommended_read_tool = "profile_workbook"
+    else:
+        recommended_read_tool = "quick_read"
+
+    return {
+        "sheet_name": sheet_name,
+        "sheet_type": "worksheet",
+        "rows": rows,
+        "columns": columns,
+        "column_range": column_range,
+        "used_range": used_range,
+        "dataset_kind": dataset_kind,
+        "recommended_read_tool": recommended_read_tool,
+        "header_profile": header_profile,
+        "total_rows": sample["total_rows"],
+        "chart_count": chart_count,
+        "merged_range_count": merged_range_count,
+        "native_tables": native_tables,
+        "dominant_table": preferred_table,
+    }
+
+
+def _workbook_named_range_findings(
+    wb: Any,
+    *,
+    named_ranges: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for named_range in named_ranges:
+        value = str(named_range.get("value") or "")
+        if "#REF!" in value.upper():
+            findings.append(
+                _audit_finding(
+                    "high",
+                    "broken_named_range_reference",
+                    f"Named range '{named_range['name']}' contains a broken #REF! reference.",
+                    sheet_name=named_range.get("local_sheet"),
+                    recommendation="Repair or remove broken defined names before relying on workbook formulas or automation.",
+                    details={
+                        "name": named_range["name"],
+                        "local_sheet": named_range.get("local_sheet"),
+                        "value": named_range.get("value"),
+                    },
+                )
+            )
+
+        missing_sheets = sorted(
+            {
+                destination["sheet_name"]
+                for destination in named_range.get("destinations", [])
+                if destination["sheet_name"] not in wb.sheetnames
+            }
+        )
+        if missing_sheets:
+            findings.append(
+                _audit_finding(
+                    "high",
+                    "named_range_missing_sheet",
+                    f"Named range '{named_range['name']}' points to missing sheet destinations.",
+                    sheet_name=named_range.get("local_sheet"),
+                    recommendation="Repair or remove defined names that reference deleted or renamed sheets.",
+                    details={
+                        "name": named_range["name"],
+                        "local_sheet": named_range.get("local_sheet"),
+                        "missing_sheets": missing_sheets,
+                    },
+                )
+            )
+    return findings
+
+
 def require_worksheet(
     wb: Any,
     sheet_name: str,
@@ -1292,6 +1542,348 @@ def profile_workbook(filepath: str) -> dict[str, Any]:
         raise
     except Exception as e:
         logger.error(f"Failed to profile workbook: {e}")
+        raise WorkbookError(str(e))
+
+
+def audit_workbook(
+    filepath: str,
+    header_row: int = 1,
+    sample_limit: int = 25,
+) -> dict[str, Any]:
+    """Audit workbook structure for high-signal issues that affect agent workflows."""
+    try:
+        if not isinstance(header_row, int) or isinstance(header_row, bool) or header_row <= 0:
+            raise WorkbookError("header_row must be a positive integer")
+        if not isinstance(sample_limit, int) or isinstance(sample_limit, bool) or sample_limit <= 0:
+            raise WorkbookError("sample_limit must be a positive integer")
+
+        path = Path(filepath)
+        if not path.exists():
+            raise WorkbookError(f"File not found: {filepath}")
+
+        with safe_workbook(filepath) as wb:
+            named_ranges = _serialize_named_ranges(wb)
+            findings: list[dict[str, Any]] = []
+            sheet_assessments: list[dict[str, Any]] = []
+            worksheet_count = 0
+            chartsheet_count = 0
+            hidden_sheet_count = 0
+            empty_sheet_count = 0
+            layout_like_sheet_count = 0
+            total_tables = 0
+            total_charts = 0
+
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                sheet_findings: list[dict[str, Any]] = []
+                visibility = getattr(ws, "sheet_state", "visible")
+                if visibility != "visible":
+                    hidden_sheet_count += 1
+                    sheet_findings.append(
+                        _audit_finding(
+                            "medium" if visibility == "veryHidden" else "low",
+                            "hidden_sheet",
+                            f"Sheet '{sheet_name}' is {visibility}.",
+                            sheet_name=sheet_name,
+                            recommendation="Confirm whether hidden sheets should be included before running broad workbook automation.",
+                            details={"visibility": visibility},
+                        )
+                    )
+
+                if _sheet_type(ws) == "chartsheet":
+                    chartsheet_count += 1
+                    chart_count = len(getattr(ws, "_charts", []))
+                    total_charts += chart_count
+                    if chart_count == 0:
+                        sheet_findings.append(
+                            _audit_finding(
+                                "low",
+                                "empty_chartsheet",
+                                f"Chartsheet '{sheet_name}' does not currently contain any charts.",
+                                sheet_name=sheet_name,
+                                recommendation="Remove empty chart sheets or populate them before sharing the workbook.",
+                            )
+                        )
+
+                    highest_severity = _highest_severity(sheet_findings)
+                    findings.extend(sheet_findings)
+                    sheet_assessments.append(
+                        {
+                            "sheet_name": sheet_name,
+                            "sheet_type": "chartsheet",
+                            "visibility": visibility,
+                            "dataset_kind": "chartsheet",
+                            "recommended_read_tool": "list_charts",
+                            "chart_count": chart_count,
+                            "table_count": 0,
+                            "finding_count": len(sheet_findings),
+                            "highest_severity": highest_severity,
+                        }
+                    )
+                    continue
+
+                worksheet_count += 1
+                assessment = _worksheet_audit_assessment(
+                    ws,
+                    sheet_name=sheet_name,
+                    header_row=header_row,
+                )
+                total_tables += len(assessment["native_tables"])
+                total_charts += assessment["chart_count"]
+
+                if assessment["dataset_kind"] == "empty_sheet":
+                    empty_sheet_count += 1
+                    sheet_findings.append(
+                        _audit_finding(
+                            "low",
+                            "empty_sheet",
+                            f"Worksheet '{sheet_name}' is empty.",
+                            sheet_name=sheet_name,
+                            recommendation="Skip empty sheets in automation flows unless you plan to populate them.",
+                        )
+                    )
+                elif assessment["dataset_kind"] == "layout_like_sheet":
+                    layout_like_sheet_count += 1
+                    sheet_findings.append(
+                        _audit_finding(
+                            "low",
+                            "layout_like_sheet",
+                            f"Worksheet '{sheet_name}' looks layout-heavy rather than cleanly tabular.",
+                            sheet_name=sheet_name,
+                            recommendation="Prefer profile_workbook or read_data_from_excel before assuming a header-based table read.",
+                            details={
+                                "chart_count": assessment["chart_count"],
+                                "merged_range_count": assessment["merged_range_count"],
+                                "header_confidence": assessment["header_profile"]["confidence"],
+                            },
+                        )
+                    )
+
+                header_profile = assessment["header_profile"]
+                if assessment["dataset_kind"] != "layout_like_sheet" and header_profile["blank_headers"] > 0:
+                    sheet_findings.append(
+                        _audit_finding(
+                            "medium",
+                            "blank_headers",
+                            f"Worksheet '{sheet_name}' has blank cells in the configured header row.",
+                            sheet_name=sheet_name,
+                            recommendation="Fill blank headers before relying on object-mode reads, queries, or row updates by field name.",
+                            details={"blank_headers": header_profile["blank_headers"]},
+                        )
+                    )
+
+                if assessment["dataset_kind"] != "layout_like_sheet" and header_profile["duplicate_headers"] > 0:
+                    sheet_findings.append(
+                        _audit_finding(
+                            "medium",
+                            "duplicate_headers",
+                            f"Worksheet '{sheet_name}' has duplicate header labels in the configured header row.",
+                            sheet_name=sheet_name,
+                            recommendation="Deduplicate headers before relying on object-mode reads, queries, or row updates by field name.",
+                            details={"duplicate_headers": header_profile["duplicate_headers"]},
+                        )
+                    )
+
+                largest_table_rows = max(
+                    [table["data_row_count"] for table in assessment["native_tables"]],
+                    default=0,
+                )
+                if max(assessment["total_rows"], largest_table_rows) >= AUDIT_LARGE_DATASET_THRESHOLD:
+                    details: dict[str, Any] = {
+                        "row_count": max(assessment["total_rows"], largest_table_rows),
+                    }
+                    if assessment["dominant_table"] is not None:
+                        details["table_name"] = assessment["dominant_table"]["table_name"]
+                    sheet_findings.append(
+                        _audit_finding(
+                            "low",
+                            "large_tabular_dataset",
+                            f"Worksheet '{sheet_name}' contains a large structured dataset.",
+                            sheet_name=sheet_name,
+                            recommendation="Prefer query_table, aggregate_table, or paginated reads for large datasets instead of full workbook dumps.",
+                            details=details,
+                        )
+                    )
+
+                broken_formula_cells = _cells_with_broken_formula_references(ws)
+                if broken_formula_cells:
+                    sheet_findings.append(
+                        _audit_finding(
+                            "high",
+                            "broken_formula_reference",
+                            f"Worksheet '{sheet_name}' contains formulas with broken #REF! references.",
+                            sheet_name=sheet_name,
+                            recommendation="Repair broken formulas before trusting workbook calculations or mutation side effects.",
+                            details={
+                                "count": len(broken_formula_cells),
+                                "sample": broken_formula_cells[:sample_limit],
+                            },
+                        )
+                    )
+
+                error_cells = _cells_with_error_values(ws)
+                if error_cells:
+                    sheet_findings.append(
+                        _audit_finding(
+                            "high",
+                            "error_cells_present",
+                            f"Worksheet '{sheet_name}' contains Excel error cells.",
+                            sheet_name=sheet_name,
+                            recommendation="Inspect and resolve workbook error cells before depending on the affected dataset.",
+                            details={
+                                "count": len(error_cells),
+                                "sample": error_cells[:sample_limit],
+                            },
+                        )
+                    )
+
+                broken_validations = _broken_validation_rules(ws)
+                if broken_validations:
+                    sheet_findings.append(
+                        _audit_finding(
+                            "high",
+                            "broken_validation_reference",
+                            f"Worksheet '{sheet_name}' contains data validation rules with broken #REF! references.",
+                            sheet_name=sheet_name,
+                            recommendation="Repair data validation formulas before applying validation-aware writes or relying on workbook integrity.",
+                            details={
+                                "count": len(broken_validations),
+                                "sample": broken_validations[:sample_limit],
+                            },
+                        )
+                    )
+
+                broken_conditional_formats = _broken_conditional_format_rules(ws)
+                if broken_conditional_formats:
+                    sheet_findings.append(
+                        _audit_finding(
+                            "high",
+                            "broken_conditional_format_reference",
+                            f"Worksheet '{sheet_name}' contains conditional formatting rules with broken #REF! references.",
+                            sheet_name=sheet_name,
+                            recommendation="Repair conditional formatting formulas before relying on dashboard semantics or visual QA.",
+                            details={
+                                "count": len(broken_conditional_formats),
+                                "sample": broken_conditional_formats[:sample_limit],
+                            },
+                        )
+                    )
+
+                highest_severity = _highest_severity(sheet_findings)
+                findings.extend(sheet_findings)
+                sheet_assessments.append(
+                    {
+                        "sheet_name": sheet_name,
+                        "sheet_type": "worksheet",
+                        "visibility": visibility,
+                        "used_range": assessment["used_range"],
+                        "rows": assessment["rows"],
+                        "columns": assessment["columns"],
+                        "dataset_kind": assessment["dataset_kind"],
+                        "recommended_read_tool": assessment["recommended_read_tool"],
+                        "table_count": len(assessment["native_tables"]),
+                        "chart_count": assessment["chart_count"],
+                        "finding_count": len(sheet_findings),
+                        "highest_severity": highest_severity,
+                    }
+                )
+
+            findings.extend(
+                _workbook_named_range_findings(
+                    wb,
+                    named_ranges=named_ranges,
+                )
+            )
+
+            severity_counter = Counter(finding["severity"] for finding in findings)
+            code_counter = Counter(finding["code"] for finding in findings)
+            high_count = severity_counter.get("high", 0)
+            medium_count = severity_counter.get("medium", 0)
+            low_count = severity_counter.get("low", 0)
+
+            if high_count > 0 or medium_count >= 4:
+                risk_level = "high"
+            elif medium_count > 0:
+                risk_level = "medium"
+            else:
+                risk_level = "low"
+
+            recommendations = [
+                finding["recommendation"]
+                for finding in findings
+                if finding.get("recommendation")
+            ]
+            deduped_recommendations: list[str] = []
+            seen_recommendations: set[str] = set()
+            for recommendation in recommendations:
+                if recommendation in seen_recommendations:
+                    continue
+                seen_recommendations.add(recommendation)
+                deduped_recommendations.append(recommendation)
+
+            sheets_needing_attention = [
+                {
+                    "sheet_name": assessment["sheet_name"],
+                    "highest_severity": assessment["highest_severity"],
+                    "finding_count": assessment["finding_count"],
+                }
+                for assessment in sheet_assessments
+                if assessment["finding_count"] > 0
+            ]
+            sheets_needing_attention.sort(
+                key=lambda item: (
+                    AUDIT_SEVERITY_RANK.get(item["highest_severity"] or "low", 0),
+                    item["finding_count"],
+                    item["sheet_name"],
+                ),
+                reverse=True,
+            )
+
+            return {
+                "filename": path.name,
+                "size": path.stat().st_size,
+                "modified": path.stat().st_mtime,
+                "summary": {
+                    "risk_level": risk_level,
+                    "finding_count": len(findings),
+                    "high_count": high_count,
+                    "medium_count": medium_count,
+                    "low_count": low_count,
+                    "sheet_count": len(wb.sheetnames),
+                    "worksheet_count": worksheet_count,
+                    "chartsheet_count": chartsheet_count,
+                    "table_count": total_tables,
+                    "chart_count": total_charts,
+                    "named_range_count": len(named_ranges),
+                    "hidden_sheet_count": hidden_sheet_count,
+                    "empty_sheet_count": empty_sheet_count,
+                    "layout_like_sheet_count": layout_like_sheet_count,
+                    "sheets_needing_attention": sheets_needing_attention[:sample_limit],
+                },
+                "sheet_assessments": sheet_assessments,
+                "findings": {
+                    "count": len(findings),
+                    "high_count": high_count,
+                    "medium_count": medium_count,
+                    "low_count": low_count,
+                    "by_code": [
+                        {"code": code, "count": count}
+                        for code, count in sorted(
+                            code_counter.items(),
+                            key=lambda item: (-item[1], item[0]),
+                        )
+                    ],
+                    "sample": findings[:sample_limit],
+                    "truncated": len(findings) > sample_limit,
+                },
+                "recommended_actions": deduped_recommendations[:sample_limit],
+            }
+
+    except WorkbookError as e:
+        logger.error(str(e))
+        raise
+    except Exception as e:
+        logger.error(f"Failed to audit workbook: {e}")
         raise WorkbookError(str(e))
 
 

@@ -32,6 +32,7 @@ from excel_mcp.chart import (
 )
 from excel_mcp.workbook import (
     analyze_range_impact as analyze_range_impact_impl,
+    audit_workbook as audit_workbook_impl,
     get_workbook_info,
     list_named_ranges as list_named_ranges_impl,
     profile_workbook as profile_workbook_impl,
@@ -190,7 +191,9 @@ def _response_size_hints(operation: str, payload: Dict[str, Any]) -> List[str]:
     elif operation == "describe_dataset":
         hints.append("set sample_rows to inspect a smaller sample")
         hints.append("use suggest_read_strategy when you only need the recommended next tool")
-    elif operation in {"profile_workbook", "list_all_sheets", "list_tables", "list_charts"}:
+    elif operation in {"profile_workbook", "audit_workbook", "list_all_sheets", "list_tables", "list_charts"}:
+        if operation == "audit_workbook":
+            hints.append("set sample_limit to return a smaller audit sample")
         hints.append("query a smaller workbook slice, such as one sheet or one table")
 
     if "changes" in payload:
@@ -1188,6 +1191,29 @@ def profile_workbook(filepath: str) -> str:
     return _run_tool(
         "profile_workbook",
         lambda: profile_workbook_impl(get_excel_path(filepath)),
+    )
+
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Audit Workbook",
+        readOnlyHint=True,
+    ),
+)
+def audit_workbook(
+    filepath: str,
+    header_row: int = 1,
+    sample_limit: int = 25,
+) -> str:
+    """Audit workbook structure for high-signal issues that affect agent workflows."""
+    return _run_tool(
+        "audit_workbook",
+        lambda: audit_workbook_impl(
+            get_excel_path(filepath),
+            header_row=header_row,
+            sample_limit=sample_limit,
+        ),
     )
 
 

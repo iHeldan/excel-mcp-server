@@ -8,7 +8,8 @@
 - Added `describe_dataset` as a lightweight worksheet/native-table summary with sample rows, inferred schema, header-quality signals, key-candidate guesses, and recommended follow-up reads.
 - Added `query_table` for declarative filtering, projection, sorting, and limiting over worksheet-shaped data or native Excel tables.
 - Added `aggregate_table` for grouped metrics such as `count`, `sum`, `avg`, `min`, and `max` without forcing agents to over-read whole datasets into context.
-- Refreshed the manifest, README, and landing-page copy for the current 55-tool surface and the newer smart-read plus query helpers.
+- Added `audit_workbook` as a workbook-level preflight that surfaces high-signal issues such as broken formula references, error cells, hidden sheets, layout-heavy tabs, header-quality problems, and missing-sheet named ranges.
+- Refreshed the manifest, README, and landing-page copy for the current 56-tool surface and the newer smart-read, query, and audit helpers.
 
 ## 0.5.0 - 2026-04-18
 
