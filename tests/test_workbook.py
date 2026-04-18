@@ -12,6 +12,7 @@ from excel_mcp.server import (
     audit_workbook as audit_workbook_tool,
     get_workbook_metadata as get_workbook_metadata_tool,
     list_all_sheets as list_all_sheets_tool,
+    plan_workbook_repairs as plan_workbook_repairs_tool,
     profile_workbook as profile_workbook_tool,
 )
 from excel_mcp.tables import create_excel_table
@@ -22,6 +23,7 @@ from excel_mcp.workbook import (
     get_workbook_info,
     list_named_ranges,
     list_sheets,
+    plan_workbook_repairs,
     profile_workbook,
 )
 
@@ -192,6 +194,7 @@ def test_audit_workbook_reports_clean_structured_workbook(tmp_workbook):
             "columns": 3,
             "dataset_kind": "worksheet_table",
             "recommended_read_tool": "quick_read",
+            "dominant_table_name": None,
             "table_count": 0,
             "chart_count": 0,
             "finding_count": 0,
@@ -281,6 +284,92 @@ def test_audit_workbook_tool_returns_json_envelope(tmp_workbook):
 def test_audit_workbook_rejects_boolean_sample_limit(tmp_workbook):
     with pytest.raises(Exception, match="sample_limit must be a positive integer"):
         audit_workbook(tmp_workbook, sample_limit=True)
+
+
+def test_plan_workbook_repairs_rejects_boolean_sample_limit(tmp_workbook):
+    with pytest.raises(Exception, match="sample_limit must be a positive integer"):
+        plan_workbook_repairs(tmp_workbook, sample_limit=True)
+
+
+def test_plan_workbook_repairs_returns_empty_plan_for_clean_workbook(tmp_workbook):
+    result = plan_workbook_repairs(tmp_workbook)
+
+    assert result["audit_summary"]["finding_count"] == 0
+    assert result["step_count"] == 0
+    assert result["steps"] == []
+    assert result["quick_wins"] == []
+
+
+def test_plan_workbook_repairs_prioritizes_high_signal_actions(tmp_path):
+    filepath = str(tmp_path / "repair-plan.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws.append(["Name", "Value", "Status"])
+    ws.append(["Alice", 10, "ok"])
+    ws["D2"] = "=SUM(#REF!)"
+    ws["E2"] = "#DIV/0!"
+    ws["E2"].data_type = "e"
+
+    raw = wb.create_sheet("Raw")
+    raw.append(["ID", "ID", None])
+    raw.append([1, 2, 3])
+
+    hidden = wb.create_sheet("Hidden")
+    hidden.sheet_state = "veryHidden"
+
+    wb.defined_names["BrokenRange"] = DefinedName(
+        "BrokenRange",
+        attr_text="MissingSheet!$A$1:$A$2",
+    )
+    wb.save(filepath)
+    wb.close()
+
+    result = plan_workbook_repairs(filepath)
+
+    assert result["step_count"] >= 5
+    assert result["steps"][0]["priority"] == "high"
+
+    steps_by_title = {step["title"]: step for step in result["steps"]}
+    formula_step = steps_by_title["Repair broken formulas on 'Data'"]
+    assert formula_step["can_execute_fully_in_sheetforge"] is False
+    assert formula_step["suggested_tools"][0]["tool"] == "read_data_from_excel"
+    assert formula_step["suggested_tools"][0]["args"]["sheet_name"] == "Data"
+    assert formula_step["suggested_tools"][0]["args"]["start_cell"] == "D2"
+
+    hidden_step = steps_by_title["Review hidden sheet 'Hidden' before workbook-wide automation"]
+    assert hidden_step["can_execute_fully_in_sheetforge"] is True
+    assert hidden_step["suggested_tools"][0]["tool"] == "set_worksheet_visibility"
+    assert hidden_step["suggested_tools"][0]["args"]["dry_run"] is True
+
+    header_step = steps_by_title["Normalize headers on 'Raw'"]
+    assert sorted(header_step["finding_codes"]) == ["blank_headers", "duplicate_headers"]
+    assert header_step["suggested_tools"][0]["tool"] == "quick_read"
+
+    named_range_step = steps_by_title["Inspect and repair workbook named ranges"]
+    assert named_range_step["suggested_tools"] == [
+        {"tool": "list_named_ranges", "args": {"filepath": filepath}}
+    ]
+
+    assert "Review hidden sheet 'Hidden' before workbook-wide automation" in result["quick_wins"]
+
+
+def test_plan_workbook_repairs_handles_layout_like_sheet(complex_workbook):
+    result = plan_workbook_repairs(complex_workbook)
+
+    steps_by_title = {step["title"]: step for step in result["steps"]}
+    dashboard_step = steps_by_title["Treat 'Dashboard' as a layout-oriented sheet"]
+    assert dashboard_step["priority"] == "low"
+    assert dashboard_step["suggested_tools"][0]["tool"] == "profile_workbook"
+    assert dashboard_step["suggested_tools"][1]["tool"] == "read_data_from_excel"
+    assert dashboard_step["suggested_tools"][1]["args"]["sheet_name"] == "Dashboard"
+
+
+def test_plan_workbook_repairs_tool_returns_json_envelope(tmp_workbook):
+    payload = _load_tool_payload(plan_workbook_repairs_tool(tmp_workbook))
+
+    assert payload["operation"] == "plan_workbook_repairs"
+    assert payload["data"]["step_count"] == 0
 
 
 def test_analyze_range_impact_reports_overlapping_structures(tmp_workbook):

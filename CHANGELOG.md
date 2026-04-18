@@ -9,7 +9,8 @@
 - Added `query_table` for declarative filtering, projection, sorting, and limiting over worksheet-shaped data or native Excel tables.
 - Added `aggregate_table` for grouped metrics such as `count`, `sum`, `avg`, `min`, and `max` without forcing agents to over-read whole datasets into context.
 - Added `audit_workbook` as a workbook-level preflight that surfaces high-signal issues such as broken formula references, error cells, hidden sheets, layout-heavy tabs, header-quality problems, and missing-sheet named ranges.
-- Refreshed the manifest, README, and landing-page copy for the current 56-tool surface and the newer smart-read, query, and audit helpers.
+- Added `plan_workbook_repairs` so agents can turn workbook audit findings into a prioritized SheetForge action queue instead of manually mapping each issue to the next tool call.
+- Refreshed the manifest, README, and landing-page copy for the current 57-tool surface and the newer smart-read, query, audit, and repair-planning helpers.
 
 ## 0.5.0 - 2026-04-18
 

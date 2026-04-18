@@ -175,6 +175,8 @@ Returns matches under `data.matches`:
   Returns a workbook inventory with per-sheet summaries for visibility, freeze panes, autofilters, protection, tables, charts, print settings, and lightweight workbook-level counts. Grid-anchored worksheet charts include anchor, dimensions, and `occupied_range` for layout-aware follow-up steps.
 - `audit_workbook(filepath: str, header_row: int = 1, sample_limit: int = 25) -> str`
   Audits workbook structure for high-signal issues that affect agent workflows. The response includes workbook summary counts, per-sheet assessments with recommended read tools, a sampled finding list grouped by severity/code, and deduplicated recommended actions.
+- `plan_workbook_repairs(filepath: str, header_row: int = 1, sample_limit: int = 25) -> str`
+  Turns workbook audit findings into prioritized next steps. The response includes ordered repair/inspection steps, suggested SheetForge tool calls, and a `quick_wins` list for issues that can be advanced entirely inside SheetForge.
 - `analyze_range_impact(filepath: str, sheet_name: str, range_ref: str) -> str`
   Inspects workbook structures that overlap a worksheet range before mutation. Reports intersections with native Excel tables, chart footprints, merged ranges, named ranges, worksheet data validations, conditional formatting rules, autofilters, print areas, formula cells inside the range, and downstream formulas or rule expressions elsewhere in the workbook that reference it directly or transitively, through named ranges, or through structured table references such as `Table1[Sales]`, plus a lightweight `risk_level`.
 - `list_named_ranges(filepath: str) -> str`

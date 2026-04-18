@@ -1215,6 +1215,31 @@ def _workbook_named_range_findings(
     return findings
 
 
+def _unique_step_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for tool in tools:
+        tool_name = tool.get("tool")
+        args = tool.get("args", {})
+        key = (str(tool_name), str(sorted(args.items())))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(tool)
+    return deduped
+
+
+def _sort_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        steps,
+        key=lambda step: (
+            -AUDIT_SEVERITY_RANK.get(step["priority"], 0),
+            str(step.get("sheet_name") or ""),
+            step["title"],
+        ),
+    )
+
+
 def require_worksheet(
     wb: Any,
     sheet_name: str,
@@ -1781,6 +1806,11 @@ def audit_workbook(
                         "columns": assessment["columns"],
                         "dataset_kind": assessment["dataset_kind"],
                         "recommended_read_tool": assessment["recommended_read_tool"],
+                        "dominant_table_name": (
+                            assessment["dominant_table"]["table_name"]
+                            if assessment["dominant_table"] is not None
+                            else None
+                        ),
                         "table_count": len(assessment["native_tables"]),
                         "chart_count": assessment["chart_count"],
                         "finding_count": len(sheet_findings),
@@ -1884,6 +1914,296 @@ def audit_workbook(
         raise
     except Exception as e:
         logger.error(f"Failed to audit workbook: {e}")
+        raise WorkbookError(str(e))
+
+
+def plan_workbook_repairs(
+    filepath: str,
+    header_row: int = 1,
+    sample_limit: int = 25,
+) -> dict[str, Any]:
+    """Translate workbook audit findings into prioritized next steps for SheetForge users."""
+    try:
+        audit = audit_workbook(
+            filepath,
+            header_row=header_row,
+            sample_limit=sample_limit,
+        )
+
+        findings_sample = audit["findings"]["sample"]
+        sheet_assessments = {
+            item["sheet_name"]: item for item in audit["sheet_assessments"]
+        }
+
+        def findings_for(
+            code: str,
+            *,
+            sheet_name: str | None = None,
+        ) -> list[dict[str, Any]]:
+            return [
+                finding
+                for finding in findings_sample
+                if finding["code"] == code and finding.get("sheet_name") == sheet_name
+            ]
+
+        steps: list[dict[str, Any]] = []
+
+        workbook_named_range_findings = [
+            finding
+            for finding in findings_sample
+            if finding["code"] in {"broken_named_range_reference", "named_range_missing_sheet"}
+        ]
+        if workbook_named_range_findings:
+            steps.append(
+                {
+                    "priority": "high",
+                    "title": "Inspect and repair workbook named ranges",
+                    "finding_codes": sorted(
+                        {
+                            finding["code"]
+                            for finding in workbook_named_range_findings
+                        }
+                    ),
+                    "reason": "Broken or missing-sheet named ranges can silently break formulas, validations, and downstream automation.",
+                    "can_execute_fully_in_sheetforge": False,
+                    "suggested_tools": [
+                        {
+                            "tool": "list_named_ranges",
+                            "args": {"filepath": filepath},
+                        }
+                    ],
+                    "follow_up": "Repair or recreate broken defined names after identifying the intended destinations.",
+                }
+            )
+
+        for sheet_name, assessment in sheet_assessments.items():
+            hidden_findings = findings_for("hidden_sheet", sheet_name=sheet_name)
+            if hidden_findings:
+                steps.append(
+                    {
+                        "priority": hidden_findings[0]["severity"],
+                        "title": f"Review hidden sheet '{sheet_name}' before workbook-wide automation",
+                        "sheet_name": sheet_name,
+                        "finding_codes": ["hidden_sheet"],
+                        "reason": "Hidden sheets can contain formulas, support data, or reporting logic that broad workbook automation might otherwise miss.",
+                        "can_execute_fully_in_sheetforge": True,
+                        "suggested_tools": _unique_step_tools(
+                            [
+                                {
+                                    "tool": "set_worksheet_visibility",
+                                    "args": {
+                                        "filepath": filepath,
+                                        "sheet_name": sheet_name,
+                                        "visibility": "visible",
+                                        "dry_run": True,
+                                    },
+                                },
+                                {
+                                    "tool": "quick_read",
+                                    "args": {
+                                        "filepath": filepath,
+                                        "sheet_name": sheet_name,
+                                        "max_rows": 5,
+                                    },
+                                },
+                            ]
+                        ),
+                        "follow_up": "If the hidden sheet matters to the workflow, rerun the planned automation after reviewing it.",
+                    }
+                )
+
+            broken_formula_findings = findings_for("broken_formula_reference", sheet_name=sheet_name)
+            if broken_formula_findings:
+                sample_cells = broken_formula_findings[0].get("details", {}).get("sample", [])
+                suggested_tools = []
+                if sample_cells:
+                    suggested_tools.append(
+                        {
+                            "tool": "read_data_from_excel",
+                            "args": {
+                                "filepath": filepath,
+                                "sheet_name": sheet_name,
+                                "start_cell": sample_cells[0],
+                                "end_cell": sample_cells[0],
+                            },
+                        }
+                    )
+                steps.append(
+                    {
+                        "priority": "high",
+                        "title": f"Repair broken formulas on '{sheet_name}'",
+                        "sheet_name": sheet_name,
+                        "finding_codes": ["broken_formula_reference"],
+                        "reason": "Formulas with #REF! are already broken and can make downstream reads or edits unreliable.",
+                        "can_execute_fully_in_sheetforge": False,
+                        "suggested_tools": suggested_tools,
+                        "follow_up": "After inspecting the broken cells, rewrite the formulas with apply_formula once the intended references are known.",
+                    }
+                )
+
+            error_cell_findings = findings_for("error_cells_present", sheet_name=sheet_name)
+            if error_cell_findings:
+                sample_cells = error_cell_findings[0].get("details", {}).get("sample", [])
+                suggested_tools = []
+                if sample_cells:
+                    suggested_tools.append(
+                        {
+                            "tool": "read_data_from_excel",
+                            "args": {
+                                "filepath": filepath,
+                                "sheet_name": sheet_name,
+                                "start_cell": sample_cells[0],
+                                "end_cell": sample_cells[0],
+                            },
+                        }
+                    )
+                steps.append(
+                    {
+                        "priority": "high",
+                        "title": f"Investigate Excel error cells on '{sheet_name}'",
+                        "sheet_name": sheet_name,
+                        "finding_codes": ["error_cells_present"],
+                        "reason": "Workbook cells already evaluate to Excel errors, which can contaminate downstream calculations and exports.",
+                        "can_execute_fully_in_sheetforge": False,
+                        "suggested_tools": suggested_tools,
+                        "follow_up": "Identify the upstream source of the error cells before mutating dependent workbook areas.",
+                    }
+                )
+
+            validation_findings = findings_for("broken_validation_reference", sheet_name=sheet_name)
+            if validation_findings:
+                steps.append(
+                    {
+                        "priority": "high",
+                        "title": f"Repair broken data validation rules on '{sheet_name}'",
+                        "sheet_name": sheet_name,
+                        "finding_codes": ["broken_validation_reference"],
+                        "reason": "Validation formulas with #REF! can mislead users and break validation-aware automation.",
+                        "can_execute_fully_in_sheetforge": False,
+                        "suggested_tools": [
+                            {
+                                "tool": "get_data_validation_info",
+                                "args": {"filepath": filepath, "sheet_name": sheet_name},
+                            }
+                        ],
+                        "follow_up": "Repair or recreate the affected validation rules once their intended source ranges are known.",
+                    }
+                )
+
+            conditional_format_findings = findings_for(
+                "broken_conditional_format_reference",
+                sheet_name=sheet_name,
+            )
+            if conditional_format_findings:
+                steps.append(
+                    {
+                        "priority": "high",
+                        "title": f"Review broken conditional formatting rules on '{sheet_name}'",
+                        "sheet_name": sheet_name,
+                        "finding_codes": ["broken_conditional_format_reference"],
+                        "reason": "Broken conditional formatting rules can make dashboards and visual QA misleading even when cell values still exist.",
+                        "can_execute_fully_in_sheetforge": False,
+                        "suggested_tools": [
+                            {
+                                "tool": "audit_workbook",
+                                "args": {
+                                    "filepath": filepath,
+                                    "header_row": header_row,
+                                    "sample_limit": sample_limit,
+                                },
+                            }
+                        ],
+                        "follow_up": "Repair the broken conditional-format formulas in the workbook after reviewing the affected applies_to ranges.",
+                    }
+                )
+
+            if (
+                assessment["dataset_kind"] != "layout_like_sheet"
+                and assessment.get("dominant_table_name") is None
+            ):
+                header_issue_findings = [
+                    *findings_for("blank_headers", sheet_name=sheet_name),
+                    *findings_for("duplicate_headers", sheet_name=sheet_name),
+                ]
+                if header_issue_findings:
+                    steps.append(
+                        {
+                            "priority": "medium",
+                            "title": f"Normalize headers on '{sheet_name}'",
+                            "sheet_name": sheet_name,
+                            "finding_codes": sorted(
+                                {
+                                    finding["code"] for finding in header_issue_findings
+                                }
+                            ),
+                            "reason": "Blank or duplicate headers make object-mode reads, queries, and keyed updates harder to trust.",
+                            "can_execute_fully_in_sheetforge": False,
+                            "suggested_tools": [
+                                {
+                                    "tool": "quick_read",
+                                    "args": {
+                                        "filepath": filepath,
+                                        "sheet_name": sheet_name,
+                                        "header_row": header_row,
+                                        "max_rows": 3,
+                                        "row_mode": "arrays",
+                                    },
+                                }
+                            ],
+                            "follow_up": "After inspecting the current header row, rewrite the header cells with write_data_to_excel before relying on field-based reads.",
+                        }
+                    )
+
+            if assessment["dataset_kind"] == "layout_like_sheet":
+                used_range = assessment.get("used_range") or "A1"
+                end_cell = used_range.split(":")[-1]
+                steps.append(
+                    {
+                        "priority": "low",
+                        "title": f"Treat '{sheet_name}' as a layout-oriented sheet",
+                        "sheet_name": sheet_name,
+                        "finding_codes": ["layout_like_sheet"],
+                        "reason": "This sheet looks dashboard-like, so forcing a tabular workflow is more likely to produce noisy or misleading results.",
+                        "can_execute_fully_in_sheetforge": True,
+                        "suggested_tools": [
+                            {
+                                "tool": "profile_workbook",
+                                "args": {"filepath": filepath},
+                            },
+                            {
+                                "tool": "read_data_from_excel",
+                                "args": {
+                                    "filepath": filepath,
+                                    "sheet_name": sheet_name,
+                                    "start_cell": "A1",
+                                    "end_cell": end_cell,
+                                    "values_only": True,
+                                    "preview_only": True,
+                                },
+                            },
+                        ],
+                        "follow_up": "Use chart, layout, or range-based tools on this sheet instead of assuming a row-based dataset.",
+                    }
+                )
+
+        sorted_steps = _sort_steps(steps)
+        quick_wins = [
+            step["title"]
+            for step in sorted_steps
+            if step["priority"] in {"high", "medium"} and step["can_execute_fully_in_sheetforge"]
+        ]
+
+        return {
+            "audit_summary": audit["summary"],
+            "step_count": len(sorted_steps),
+            "steps": sorted_steps,
+            "quick_wins": quick_wins[:sample_limit],
+        }
+
+    except WorkbookError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to plan workbook repairs: {e}")
         raise WorkbookError(str(e))
 
 

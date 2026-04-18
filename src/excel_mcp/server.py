@@ -35,6 +35,7 @@ from excel_mcp.workbook import (
     audit_workbook as audit_workbook_impl,
     get_workbook_info,
     list_named_ranges as list_named_ranges_impl,
+    plan_workbook_repairs as plan_workbook_repairs_impl,
     profile_workbook as profile_workbook_impl,
     require_worksheet,
 )
@@ -191,8 +192,8 @@ def _response_size_hints(operation: str, payload: Dict[str, Any]) -> List[str]:
     elif operation == "describe_dataset":
         hints.append("set sample_rows to inspect a smaller sample")
         hints.append("use suggest_read_strategy when you only need the recommended next tool")
-    elif operation in {"profile_workbook", "audit_workbook", "list_all_sheets", "list_tables", "list_charts"}:
-        if operation == "audit_workbook":
+    elif operation in {"profile_workbook", "audit_workbook", "plan_workbook_repairs", "list_all_sheets", "list_tables", "list_charts"}:
+        if operation in {"audit_workbook", "plan_workbook_repairs"}:
             hints.append("set sample_limit to return a smaller audit sample")
         hints.append("query a smaller workbook slice, such as one sheet or one table")
 
@@ -1210,6 +1211,29 @@ def audit_workbook(
     return _run_tool(
         "audit_workbook",
         lambda: audit_workbook_impl(
+            get_excel_path(filepath),
+            header_row=header_row,
+            sample_limit=sample_limit,
+        ),
+    )
+
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Plan Workbook Repairs",
+        readOnlyHint=True,
+    ),
+)
+def plan_workbook_repairs(
+    filepath: str,
+    header_row: int = 1,
+    sample_limit: int = 25,
+) -> str:
+    """Turn workbook audit findings into prioritized next steps for SheetForge workflows."""
+    return _run_tool(
+        "plan_workbook_repairs",
+        lambda: plan_workbook_repairs_impl(
             get_excel_path(filepath),
             header_row=header_row,
             sample_limit=sample_limit,
