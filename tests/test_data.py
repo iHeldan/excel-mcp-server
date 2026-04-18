@@ -7,21 +7,25 @@ import excel_mcp.server as server_module
 
 from excel_mcp.data import (
     append_table_rows,
+    describe_dataset as describe_dataset_impl,
     quick_read as quick_read_impl,
     read_as_table,
     read_excel_range,
     read_excel_range_with_metadata,
     search_cells,
+    suggest_read_strategy as suggest_read_strategy_impl,
     update_rows_by_key,
     write_data,
 )
 from excel_mcp.exceptions import DataError
 from excel_mcp.server import (
+    describe_dataset as describe_dataset_tool,
     list_all_sheets,
     quick_read,
     read_data_from_excel,
     read_excel_as_table as read_excel_as_table_tool,
     search_in_sheet,
+    suggest_read_strategy as suggest_read_strategy_tool,
 )
 
 
@@ -885,6 +889,122 @@ def test_quick_read_tool_skips_chartsheet_when_first_sheet_is_not_a_worksheet(tm
     assert payload["operation"] == "quick_read"
     assert payload["data"]["sheet_name"] == "Data"
     assert payload["data"]["auto_selected_sheet"] is True
+
+
+def test_describe_dataset_summarizes_tabular_worksheet(tmp_workbook):
+    result = describe_dataset_impl(tmp_workbook, sheet_name="Sheet1", sample_rows=2)
+
+    assert result["target_kind"] == "worksheet"
+    assert result["dataset_kind"] == "worksheet_table"
+    assert result["sheet_name"] == "Sheet1"
+    assert result["used_range"] == "A1:C6"
+    assert result["headers"] == ["Name", "Age", "City"]
+    assert result["total_rows"] == 5
+    assert result["sample_row_count"] == 2
+    assert result["schema"][1]["type"] == "integer"
+    assert result["recommended_read_tool"] == "quick_read"
+    assert any(candidate["field"] == "name" for candidate in result["key_candidates"])
+
+
+def test_describe_dataset_summarizes_native_excel_table(tmp_workbook):
+    from excel_mcp.tables import create_excel_table
+
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
+
+    result = describe_dataset_impl(tmp_workbook, table_name="Customers", sample_rows=2)
+
+    assert result["target_kind"] == "excel_table"
+    assert result["dataset_kind"] == "structured_table"
+    assert result["table_name"] == "Customers"
+    assert result["headers"] == ["Name", "Age", "City"]
+    assert result["total_rows"] == 5
+    assert result["sample_row_count"] == 2
+    assert result["recommended_read_tool"] == "read_excel_table"
+    assert result["recommended_args"]["table_name"] == "Customers"
+
+
+def test_describe_dataset_identifies_layout_like_sheet(complex_workbook):
+    result = describe_dataset_impl(complex_workbook)
+
+    assert result["target_kind"] == "worksheet"
+    assert result["sheet_name"] == "Dashboard"
+    assert result["auto_selected_sheet"] is True
+    assert result["dataset_kind"] == "layout_like_sheet"
+    assert result["recommended_read_tool"] == "profile_workbook"
+    assert any("merged cells" in observation.lower() for observation in result["observations"])
+
+
+def test_describe_dataset_handles_explicit_chart_sheet(tmp_path):
+    filepath = _create_chartsheet_first_workbook(tmp_path)
+
+    result = describe_dataset_impl(filepath, sheet_name="Charts")
+
+    assert result["target_kind"] == "chartsheet"
+    assert result["recommended_read_tool"] == "list_charts"
+    assert result["sheet_name"] == "Charts"
+
+
+def test_suggest_read_strategy_prefers_quick_read_for_simple_sheet(tmp_workbook):
+    result = suggest_read_strategy_impl(tmp_workbook, sheet_name="Sheet1")
+
+    assert result["recommended_tool"] == "quick_read"
+    assert result["suggested_args"]["sheet_name"] == "Sheet1"
+    assert result["suggested_args"]["row_mode"] == "objects"
+    assert result["suggested_args"]["infer_schema"] is True
+
+
+def test_suggest_read_strategy_prefers_native_table_when_available(tmp_workbook):
+    from excel_mcp.tables import create_excel_table
+
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
+
+    result = suggest_read_strategy_impl(tmp_workbook, sheet_name="Sheet1")
+
+    assert result["recommended_tool"] == "read_excel_table"
+    assert result["suggested_args"]["table_name"] == "Customers"
+    assert result["confidence"] == "high"
+
+
+def test_suggest_read_strategy_prefers_profile_workbook_for_layout_sheet(complex_workbook):
+    result = suggest_read_strategy_impl(complex_workbook)
+
+    assert result["recommended_tool"] == "profile_workbook"
+    assert result["suggested_args"] == {"filepath": complex_workbook}
+    assert result["confidence"] == "high"
+
+
+def test_suggest_read_strategy_can_switch_to_range_preview_for_layout_goal(complex_workbook):
+    result = suggest_read_strategy_impl(complex_workbook, goal="layout")
+
+    assert result["recommended_tool"] == "read_data_from_excel"
+    assert result["suggested_args"]["sheet_name"] == "Dashboard"
+    assert result["suggested_args"]["preview_only"] is True
+    assert result["suggested_args"]["values_only"] is True
+    assert result["suggested_args"]["end_cell"] == "C2"
+
+
+def test_suggest_read_strategy_handles_explicit_chart_sheet(tmp_path):
+    filepath = _create_chartsheet_first_workbook(tmp_path)
+
+    result = suggest_read_strategy_impl(filepath, sheet_name="Charts")
+
+    assert result["recommended_tool"] == "list_charts"
+    assert result["suggested_args"]["sheet_name"] == "Charts"
+    assert result["target_kind"] == "chartsheet"
+
+
+def test_describe_dataset_tool_returns_json_envelope(tmp_workbook):
+    payload = _load_tool_payload(describe_dataset_tool(tmp_workbook, sheet_name="Sheet1", sample_rows=2))
+
+    assert payload["operation"] == "describe_dataset"
+    assert payload["data"]["dataset_kind"] == "worksheet_table"
+
+
+def test_suggest_read_strategy_tool_returns_json_envelope(tmp_workbook):
+    payload = _load_tool_payload(suggest_read_strategy_tool(tmp_workbook, sheet_name="Sheet1"))
+
+    assert payload["operation"] == "suggest_read_strategy"
+    assert payload["data"]["recommended_tool"] == "quick_read"
 
 
 def test_quick_read_rejects_invalid_row_mode(multi_sheet_workbook):

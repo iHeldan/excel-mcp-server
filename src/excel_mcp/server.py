@@ -39,9 +39,11 @@ from excel_mcp.workbook import (
 )
 from excel_mcp.data import (
     append_table_rows as append_table_rows_impl,
+    describe_dataset as describe_dataset_impl,
     quick_read as quick_read_impl,
     read_as_table,
     search_cells,
+    suggest_read_strategy as suggest_read_strategy_impl,
     update_rows_by_key as update_rows_by_key_impl,
     write_data,
 )
@@ -173,6 +175,9 @@ def _response_size_hints(operation: str, payload: Dict[str, Any]) -> List[str]:
             hints.append("switch to row_mode='arrays' for a smaller payload")
         if operation == "read_excel_as_table" and "sheet_name" in data_dict:
             hints.append("set compact=True to trim nonessential metadata")
+    elif operation == "describe_dataset":
+        hints.append("set sample_rows to inspect a smaller sample")
+        hints.append("use suggest_read_strategy when you only need the recommended next tool")
     elif operation in {"profile_workbook", "list_all_sheets", "list_tables", "list_charts"}:
         hints.append("query a smaller workbook slice, such as one sheet or one table")
 
@@ -586,6 +591,62 @@ def quick_read(
             include_headers=include_headers,
             row_mode=row_mode,
             infer_schema=infer_schema,
+        ),
+    )
+
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Describe Dataset",
+        readOnlyHint=True,
+    ),
+)
+def describe_dataset(
+    filepath: str,
+    sheet_name: Optional[str] = None,
+    table_name: Optional[str] = None,
+    header_row: int = 1,
+    sample_rows: int = 25,
+) -> str:
+    """Summarize a worksheet or native Excel table for agent-friendly orientation."""
+    return _run_tool(
+        "describe_dataset",
+        lambda: describe_dataset_impl(
+            get_excel_path(filepath),
+            sheet_name=sheet_name,
+            table_name=table_name,
+            header_row=header_row,
+            sample_rows=sample_rows,
+        ),
+    )
+
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Suggest Read Strategy",
+        readOnlyHint=True,
+    ),
+)
+def suggest_read_strategy(
+    filepath: str,
+    goal: Optional[str] = None,
+    sheet_name: Optional[str] = None,
+    table_name: Optional[str] = None,
+    header_row: int = 1,
+    sample_rows: int = 25,
+) -> str:
+    """Recommend the best SheetForge read tool for the requested workbook target."""
+    return _run_tool(
+        "suggest_read_strategy",
+        lambda: suggest_read_strategy_impl(
+            get_excel_path(filepath),
+            goal=goal,
+            sheet_name=sheet_name,
+            table_name=table_name,
+            header_row=header_row,
+            sample_rows=sample_rows,
         ),
     )
 

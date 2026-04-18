@@ -7,7 +7,7 @@ If you are looking for an Excel MCP server for spreadsheet automation, workbook 
 Package name: `sheetforge-mcp`
 CLI command: `sheetforge-mcp`
 Published package release: `0.5.0`
-Repository docs track the current main-branch tool surface, which currently exposes `51` MCP tools.
+Repository docs track the current main-branch tool surface, which currently exposes `53` MCP tools.
 
 ## Excel MCP Server Features
 
@@ -114,10 +114,10 @@ http://127.0.0.1:8017/sse
 
 ## Tooling Overview
 
-The server currently registers 51 MCP tools across these groups:
+The server currently registers 53 MCP tools across these groups:
 
 - workbook overview: `create_workbook`, `create_worksheet`, `get_workbook_metadata`, `profile_workbook`, `analyze_range_impact`, `list_named_ranges`, `list_all_sheets`, `list_tables`
-- data access: `quick_read`, `read_excel_table`, `read_data_from_excel`, `read_excel_as_table`, `search_in_sheet`, `write_data_to_excel`, `append_table_rows`, `upsert_excel_table_rows`, `update_rows_by_key`
+- data access: `suggest_read_strategy`, `describe_dataset`, `quick_read`, `read_excel_table`, `read_data_from_excel`, `read_excel_as_table`, `search_in_sheet`, `write_data_to_excel`, `append_table_rows`, `upsert_excel_table_rows`, `update_rows_by_key`
 - worksheet and range changes: `copy_worksheet`, `delete_worksheet`, `rename_worksheet`, `set_worksheet_visibility`, `get_worksheet_protection`, `set_worksheet_protection`, `copy_range`, `delete_range`, `insert_rows`, `insert_columns`, `delete_sheet_rows`, `delete_sheet_columns`
 - formatting and layout: `format_range`, `format_ranges`, `freeze_panes`, `set_autofilter`, `set_print_area`, `set_print_titles`, `set_column_widths`, `autofit_columns`, `set_row_heights`, `merge_cells`, `unmerge_cells`, `get_merged_cells`
 - formulas and validation: `apply_formula`, `validate_formula_syntax`, `validate_excel_range`, `get_data_validation_info`
@@ -134,6 +134,8 @@ For chart authoring, prefer `create_chart` as the primary entry point:
 
 The most agent-friendly read tools are:
 
+- `suggest_read_strategy`: recommends the best next read tool for a workbook target, including whether SheetForge should treat it as a native Excel table, a clean worksheet dataset, a layout-heavy dashboard sheet, or a chart sheet
+- `describe_dataset`: samples a worksheet or native Excel table and returns headers, schema hints, key-candidate guesses, structural signals, and a recommended follow-up read path
 - `profile_workbook`: one-call inventory for sheets, tables, charts, named ranges, and key layout/protection state, including chart `occupied_range` for grid-anchored worksheet charts
 - `analyze_range_impact`: preflight blast-radius check for a worksheet range, including overlaps with tables, chart footprints, merged cells, named ranges, data validations, conditional formats, autofilters, print areas, formula cells inside the range, and formulas or rule expressions elsewhere that depend on it directly or transitively, through named ranges, or through structured table references such as `Table1[Sales]`
 - `quick_read`: single-call compact table read that auto-selects the first sheet when needed, now with `start_row` pagination and `start_col` / `end_col` column windowing for large sheets
@@ -161,6 +163,8 @@ For the compact table readers (`quick_read`, `read_excel_as_table`, `read_excel_
 - `start_col` / `end_col` let you slice wide worksheets or native Excel tables down to just the columns you need before pagination or schema inference
 - truncated pages now include `next_start_row`, which you can pass back to the same tool for the next page
 - non-tabular range reads can also return `continuations.down` and `continuations.right` cursor tokens so agents can continue large 2D windows without recomputing coordinates
+- `suggest_read_strategy` helps agents choose between table-aware, worksheet-aware, range-aware, and workbook-orientation reads before they spend context on the wrong path
+- `describe_dataset` provides a lighter-weight dataset summary than a full read, including sample rows, header quality, key candidates, and recommended next tool
 
 See [TOOLS.md](TOOLS.md) for the full reference.
 Release notes live in [CHANGELOG.md](CHANGELOG.md).

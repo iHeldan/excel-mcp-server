@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- Added `suggest_read_strategy` so agents can ask SheetForge which read path best fits a workbook target before spending context on the wrong tool.
+- Added `describe_dataset` as a lightweight worksheet/native-table summary with sample rows, inferred schema, header-quality signals, key-candidate guesses, and recommended follow-up reads.
+- Refreshed the manifest, README, and landing-page copy for the current 53-tool surface and the new smart-read orientation helpers.
+
 ## 0.5.0 - 2026-04-18
 
 This minor release expands SheetForge MCP from workbook CRUD into a stronger workbook-analysis and large-read workflow for AI agents and automation pipelines.

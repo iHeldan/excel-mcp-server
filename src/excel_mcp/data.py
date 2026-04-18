@@ -9,7 +9,7 @@ import unicodedata
 from typing import Any, Dict, List, Optional
 
 from openpyxl.worksheet.worksheet import Worksheet
-from openpyxl.utils import column_index_from_string, get_column_letter
+from openpyxl.utils import column_index_from_string, get_column_letter, range_boundaries
 
 from .exceptions import DataError
 from .cell_utils import parse_cell_range
@@ -19,6 +19,8 @@ from .workbook import first_worksheet, require_worksheet, safe_workbook
 logger = logging.getLogger(__name__)
 ROW_MODES = {"arrays", "objects"}
 RANGE_READ_CURSOR_VERSION = 1
+DEFAULT_DATASET_SAMPLE_ROWS = 25
+KEY_CANDIDATE_SCAN_LIMIT = 100
 
 
 def _cell_address(row: int, col: int) -> str:
@@ -227,6 +229,651 @@ def _column_index(label: str, *, argument_name: str) -> int:
         return column_index_from_string(label.upper())
     except ValueError as exc:
         raise DataError(f"{argument_name} must be a valid Excel column label") from exc
+
+
+def _sheet_type_name(ws: Any) -> str:
+    return "chartsheet" if ws.__class__.__name__ == "Chartsheet" else "worksheet"
+
+
+def _worksheet_is_empty(ws: Worksheet) -> bool:
+    return ws.max_row == 1 and ws.max_column == 1 and ws.cell(1, 1).value is None
+
+
+def _worksheet_used_range(ws: Worksheet) -> Optional[str]:
+    if _worksheet_is_empty(ws):
+        return None
+    return f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
+
+
+def _is_blank(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and value.strip() == "")
+
+
+def _stringify_value_for_uniqueness(value: Any) -> Any:
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, sort_keys=True, default=str)
+    if isinstance(value, (date, datetime, time, Decimal)):
+        return str(value)
+    return value
+
+
+def _header_profile(headers: List[Any]) -> Dict[str, Any]:
+    total = len(headers)
+    if total == 0:
+        return {
+            "total_headers": 0,
+            "non_empty_headers": 0,
+            "blank_headers": 0,
+            "string_headers": 0,
+            "duplicate_headers": 0,
+            "score": 0.0,
+            "confidence": "low",
+        }
+
+    normalized_headers: List[str] = []
+    non_empty_headers = 0
+    string_headers = 0
+    for header in headers:
+        if _is_blank(header):
+            continue
+        non_empty_headers += 1
+        if isinstance(header, str) and header.strip():
+            string_headers += 1
+            normalized_headers.append(header.strip().lower())
+        else:
+            normalized_headers.append(str(header).strip().lower())
+
+    blank_headers = total - non_empty_headers
+    duplicate_headers = len(normalized_headers) - len(set(normalized_headers))
+
+    non_empty_ratio = non_empty_headers / total
+    string_ratio = string_headers / non_empty_headers if non_empty_headers else 0.0
+    duplicate_penalty = min(0.25, duplicate_headers * 0.1)
+    score = max(0.0, min(1.0, non_empty_ratio * 0.65 + string_ratio * 0.35 - duplicate_penalty))
+
+    if score >= 0.85:
+        confidence = "high"
+    elif score >= 0.6:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    return {
+        "total_headers": total,
+        "non_empty_headers": non_empty_headers,
+        "blank_headers": blank_headers,
+        "string_headers": string_headers,
+        "duplicate_headers": duplicate_headers,
+        "score": round(score, 2),
+        "confidence": confidence,
+    }
+
+
+def _infer_key_candidates(
+    headers: List[Any],
+    rows: List[List[Any]],
+    schema: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    scan_rows = rows[:KEY_CANDIDATE_SCAN_LIMIT]
+    if len(scan_rows) < 2:
+        return []
+
+    candidates: List[Dict[str, Any]] = []
+    for index, column in enumerate(schema):
+        column_values = [row[index] if index < len(row) else None for row in scan_rows]
+        non_blank_values = [
+            _stringify_value_for_uniqueness(value)
+            for value in column_values
+            if not _is_blank(value)
+        ]
+        if len(non_blank_values) < 2:
+            continue
+
+        unique_ratio = len(set(non_blank_values)) / len(non_blank_values)
+        if unique_ratio < 0.95:
+            continue
+
+        confidence = (
+            "high"
+            if unique_ratio == 1.0 and len(non_blank_values) == len(scan_rows)
+            else "medium"
+        )
+        candidates.append(
+            {
+                "field": column["field"],
+                "header": headers[index] if index < len(headers) else None,
+                "type": column["type"],
+                "sample_unique_ratio": round(unique_ratio, 2),
+                "confidence": confidence,
+            }
+        )
+
+    candidates.sort(
+        key=lambda item: (
+            0 if item["confidence"] == "high" else 1,
+            item["field"],
+        )
+    )
+    return candidates[:5]
+
+
+def _normalize_read_goal(goal: Optional[str]) -> str:
+    if goal is None or not goal.strip():
+        return "inspect"
+
+    normalized = goal.strip().lower()
+    layout_keywords = {"layout", "dashboard", "chart", "visual", "format", "canvas"}
+    tabular_keywords = {
+        "table",
+        "rows",
+        "records",
+        "schema",
+        "data",
+        "extract",
+        "analytics",
+        "aggregate",
+        "summary",
+    }
+
+    if any(keyword in normalized for keyword in layout_keywords):
+        return "layout"
+    if any(keyword in normalized for keyword in tabular_keywords):
+        return "tabular"
+    return "inspect"
+
+
+def _table_dominates_sheet(summary: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    native_tables = summary.get("native_tables", [])
+    if len(native_tables) != 1:
+        return None
+
+    table = native_tables[0]
+    total_rows = summary.get("total_rows", 0)
+    column_count = summary.get("column_count", 0)
+    if total_rows <= 0 or column_count <= 0:
+        return None
+
+    row_coverage = table["data_row_count"] / total_rows if total_rows else 0.0
+    col_coverage = table["column_count"] / column_count if column_count else 0.0
+    if row_coverage >= 0.8 and col_coverage >= 0.8:
+        return table
+    return None
+
+
+def _strategy_page_size(total_rows: int) -> Optional[int]:
+    if total_rows > DEFAULT_DATASET_SAMPLE_ROWS:
+        return DEFAULT_DATASET_SAMPLE_ROWS
+    return None
+
+
+def _worksheet_dataset_kind(
+    *,
+    used_range: Optional[str],
+    total_rows: int,
+    header_confidence: str,
+    chart_count: int,
+    merged_range_count: int,
+) -> str:
+    if used_range is None:
+        return "empty_sheet"
+    if (chart_count > 0 or merged_range_count > 0) and header_confidence == "low":
+        return "layout_like_sheet"
+    if total_rows > 0 and header_confidence in {"high", "medium"}:
+        return "worksheet_table"
+    return "mixed_sheet"
+
+
+def _describe_chartsheet(
+    *,
+    filepath: str,
+    sheet_name: str,
+    auto_selected_sheet: bool,
+    chart_count: int,
+) -> Dict[str, Any]:
+    return {
+        "target_kind": "chartsheet",
+        "dataset_kind": "chartsheet",
+        "sheet_name": sheet_name,
+        "auto_selected_sheet": auto_selected_sheet,
+        "chart_count": chart_count,
+        "observations": [
+            "Chart sheets do not expose worksheet cells or tabular headers.",
+            "Use chart-oriented workbook tools instead of worksheet table readers.",
+        ],
+        "recommended_read_tool": "list_charts",
+        "recommended_args": {
+            "filepath": filepath,
+            "sheet_name": sheet_name,
+        },
+    }
+
+
+def _describe_table_dataset(
+    filepath: str,
+    *,
+    table_name: str,
+    sheet_name: Optional[str] = None,
+    sample_rows: int = DEFAULT_DATASET_SAMPLE_ROWS,
+) -> Dict[str, Any]:
+    from .tables import _build_table_metadata, _find_table
+
+    with safe_workbook(str(filepath)) as wb:
+        current_sheet_name, ws, table = _find_table(wb, table_name, sheet_name=sheet_name)
+        metadata = _build_table_metadata(current_sheet_name, ws, table)
+        min_col, min_row, max_col, max_row = range_boundaries(table.ref)
+        data_start_row = min_row + metadata["header_row_count"]
+        data_end_row = max_row - metadata["totals_row_count"]
+        row_limit = min(metadata["data_row_count"], sample_rows)
+        sample_data_rows: List[List[Any]] = []
+        for row_index in range(data_start_row, data_start_row + row_limit):
+            if row_index > data_end_row:
+                break
+            sample_data_rows.append(
+                [
+                    ws.cell(row=row_index, column=column_index).value
+                    for column_index in range(min_col, max_col + 1)
+                ]
+            )
+
+        sample = {
+            "headers": metadata["headers"],
+            "rows": sample_data_rows,
+            "schema": _build_schema(metadata["headers"], sample_data_rows),
+            "truncated": metadata["data_row_count"] > sample_rows,
+        }
+
+    key_candidates = _infer_key_candidates(
+        sample["headers"],
+        sample["rows"],
+        sample.get("schema", []),
+    )
+    observations = [
+        f"Native Excel table '{metadata['table_name']}' provides explicit row and column boundaries.",
+    ]
+    if metadata["totals_row_shown"]:
+        observations.append("Table has a totals row, so append-like mutations stay more constrained.")
+    if sample.get("truncated"):
+        observations.append(
+            f"Sample rows are truncated to {sample_rows}; continue with read_excel_table for deeper pagination."
+        )
+
+    recommended_args: Dict[str, Any] = {
+        "filepath": filepath,
+        "table_name": metadata["table_name"],
+        "sheet_name": current_sheet_name,
+        "row_mode": "objects",
+        "infer_schema": True,
+    }
+    page_size = _strategy_page_size(metadata["data_row_count"])
+    if page_size is not None:
+        recommended_args["max_rows"] = page_size
+
+    return {
+        "target_kind": "excel_table",
+        "dataset_kind": "structured_table",
+        "sheet_name": current_sheet_name,
+        "table_name": metadata["table_name"],
+        "range": metadata["range"],
+        "column_count": metadata["column_count"],
+        "total_rows": metadata["data_row_count"],
+        "sample_row_count": len(sample["rows"]),
+        "headers": sample["headers"],
+        "sample_rows": sample["rows"],
+        "schema": sample.get("schema", []),
+        "key_candidates": key_candidates,
+        "native_table_count": 1,
+        "native_tables": [
+            {
+                "table_name": metadata["table_name"],
+                "range": metadata["range"],
+                "data_row_count": metadata["data_row_count"],
+                "column_count": metadata["column_count"],
+            }
+        ],
+        "header_profile": _header_profile(sample["headers"]),
+        "observations": observations,
+        "recommended_read_tool": "read_excel_table",
+        "recommended_args": recommended_args,
+    }
+
+
+def _describe_worksheet_dataset(
+    filepath: str,
+    *,
+    sheet_name: Optional[str] = None,
+    header_row: int = 1,
+    sample_rows: int = DEFAULT_DATASET_SAMPLE_ROWS,
+) -> Dict[str, Any]:
+    from .tables import _build_table_metadata
+
+    with safe_workbook(str(filepath)) as wb:
+        auto_selected_sheet = sheet_name is None
+        if auto_selected_sheet:
+            resolved_sheet_name, ws = first_worksheet(wb, error_cls=DataError)
+        else:
+            if sheet_name not in wb.sheetnames:
+                raise DataError(f"Sheet '{sheet_name}' not found")
+            resolved_sheet_name = sheet_name
+            ws = wb[resolved_sheet_name]
+
+        if _sheet_type_name(ws) == "chartsheet":
+            return _describe_chartsheet(
+                filepath=filepath,
+                sheet_name=resolved_sheet_name,
+                auto_selected_sheet=auto_selected_sheet,
+                chart_count=len(getattr(ws, "_charts", [])),
+            )
+
+        worksheet = require_worksheet(
+            wb,
+            resolved_sheet_name,
+            error_cls=DataError,
+            operation="dataset description",
+        )
+        sample = _read_table_from_worksheet(
+            worksheet,
+            resolved_sheet_name,
+            header_row=header_row,
+            max_rows=sample_rows,
+            include_headers=True,
+            row_mode="arrays",
+            infer_schema=True,
+        )
+        native_tables = [
+            _build_table_metadata(resolved_sheet_name, worksheet, table)
+            for table in worksheet.tables.values()
+        ]
+
+        used_range = _worksheet_used_range(worksheet)
+        header_profile = _header_profile(sample["headers"])
+        key_candidates = _infer_key_candidates(
+            sample["headers"],
+            sample["rows"],
+            sample.get("schema", []),
+        )
+        chart_count = len(getattr(worksheet, "_charts", []))
+        merged_range_count = len(worksheet.merged_cells.ranges)
+        dataset_kind = _worksheet_dataset_kind(
+            used_range=used_range,
+            total_rows=sample["total_rows"],
+            header_confidence=header_profile["confidence"],
+            chart_count=chart_count,
+            merged_range_count=merged_range_count,
+        )
+
+        observations: List[str] = []
+        if native_tables:
+            observations.append(
+                f"Worksheet contains {len(native_tables)} native Excel table(s) that may be better read with read_excel_table."
+            )
+        if header_profile["blank_headers"] > 0:
+            observations.append("Header row contains blank cells, which lowers tabular confidence.")
+        if header_profile["duplicate_headers"] > 0:
+            observations.append("Header row contains duplicate labels, so normalized field names may be deduped.")
+        if chart_count > 0:
+            observations.append("Worksheet contains embedded charts, which is common in dashboard-like layouts.")
+        if merged_range_count > 0:
+            observations.append("Worksheet contains merged cells, which often signals a layout-oriented sheet.")
+        if sample.get("truncated"):
+            observations.append(
+                f"Sample rows are truncated to {sample_rows}; use pagination helpers for deeper reads."
+            )
+
+        dominated_table = _table_dominates_sheet(
+            {
+                "native_tables": native_tables,
+                "total_rows": sample["total_rows"],
+                "column_count": len(sample["headers"]),
+            }
+        )
+
+        if dominated_table is not None:
+            recommended_read_tool = "read_excel_table"
+            recommended_args: Dict[str, Any] = {
+                "filepath": filepath,
+                "table_name": dominated_table["table_name"],
+                "sheet_name": resolved_sheet_name,
+                "row_mode": "objects",
+                "infer_schema": True,
+            }
+            page_size = _strategy_page_size(dominated_table["data_row_count"])
+            if page_size is not None:
+                recommended_args["max_rows"] = page_size
+        elif dataset_kind == "layout_like_sheet":
+            recommended_read_tool = "profile_workbook"
+            recommended_args = {"filepath": filepath}
+        else:
+            recommended_read_tool = "quick_read"
+            recommended_args = {
+                "filepath": filepath,
+                "sheet_name": resolved_sheet_name,
+                "row_mode": "objects",
+                "infer_schema": True,
+            }
+            page_size = _strategy_page_size(sample["total_rows"])
+            if page_size is not None:
+                recommended_args["max_rows"] = page_size
+
+        return {
+            "target_kind": "worksheet",
+            "dataset_kind": dataset_kind,
+            "sheet_name": resolved_sheet_name,
+            "auto_selected_sheet": auto_selected_sheet,
+            "header_row": header_row,
+            "used_range": used_range,
+            "column_count": len(sample["headers"]),
+            "total_rows": sample["total_rows"],
+            "sample_row_count": len(sample["rows"]),
+            "headers": sample["headers"],
+            "sample_rows": sample["rows"],
+            "schema": sample.get("schema", []),
+            "key_candidates": key_candidates,
+            "header_profile": header_profile,
+            "chart_count": chart_count,
+            "merged_range_count": merged_range_count,
+            "has_autofilter": bool(worksheet.auto_filter.ref),
+            "freeze_panes": getattr(worksheet.freeze_panes, "coordinate", worksheet.freeze_panes),
+            "native_table_count": len(native_tables),
+            "native_tables": [
+                {
+                    "table_name": table["table_name"],
+                    "range": table["range"],
+                    "data_row_count": table["data_row_count"],
+                    "column_count": table["column_count"],
+                }
+                for table in native_tables
+            ],
+            "observations": observations,
+            "recommended_read_tool": recommended_read_tool,
+            "recommended_args": recommended_args,
+        }
+
+
+def describe_dataset(
+    filepath: str,
+    sheet_name: Optional[str] = None,
+    table_name: Optional[str] = None,
+    header_row: int = 1,
+    sample_rows: int = DEFAULT_DATASET_SAMPLE_ROWS,
+) -> Dict[str, Any]:
+    """Describe the most likely dataset shape for a worksheet or native Excel table."""
+    try:
+        if header_row <= 0:
+            raise DataError("header_row must be a positive integer")
+        if sample_rows <= 0:
+            raise DataError("sample_rows must be a positive integer")
+
+        if table_name is not None:
+            return _describe_table_dataset(
+                filepath,
+                table_name=table_name,
+                sheet_name=sheet_name,
+                sample_rows=sample_rows,
+            )
+
+        return _describe_worksheet_dataset(
+            filepath,
+            sheet_name=sheet_name,
+            header_row=header_row,
+            sample_rows=sample_rows,
+        )
+    except DataError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to describe dataset: {e}")
+        raise DataError(str(e))
+
+
+def suggest_read_strategy(
+    filepath: str,
+    goal: Optional[str] = None,
+    sheet_name: Optional[str] = None,
+    table_name: Optional[str] = None,
+    header_row: int = 1,
+    sample_rows: int = DEFAULT_DATASET_SAMPLE_ROWS,
+) -> Dict[str, Any]:
+    """Recommend the best SheetForge read path for a workbook target."""
+    try:
+        summary = describe_dataset(
+            filepath,
+            sheet_name=sheet_name,
+            table_name=table_name,
+            header_row=header_row,
+            sample_rows=sample_rows,
+        )
+        normalized_goal = _normalize_read_goal(goal)
+        observations = list(summary.get("observations", []))
+
+        if summary["target_kind"] == "chartsheet":
+            recommended_tool = "list_charts"
+            reason = "Chart sheets do not expose a worksheet grid, so tabular readers are the wrong fit."
+            confidence = "high"
+            suggested_args = {
+                "filepath": filepath,
+                "sheet_name": summary["sheet_name"],
+            }
+            alternatives = [
+                {
+                    "tool": "profile_workbook",
+                    "reason": "Use workbook orientation first when you need broader chart and sheet context.",
+                }
+            ]
+        elif summary["target_kind"] == "excel_table":
+            recommended_tool = "read_excel_table"
+            reason = (
+                f"Native Excel table '{summary['table_name']}' already defines stable headers and row bounds."
+            )
+            confidence = "high"
+            suggested_args = dict(summary["recommended_args"])
+            alternatives = [
+                {
+                    "tool": "quick_read",
+                    "reason": "Use only if you intentionally want worksheet-shaped reads instead of table semantics.",
+                }
+            ]
+        elif summary["dataset_kind"] == "layout_like_sheet":
+            if normalized_goal == "layout":
+                recommended_tool = "read_data_from_excel"
+                reason = (
+                    "This sheet looks layout-oriented, so a compact cell-range preview is safer than assuming a clean table."
+                )
+                confidence = "high"
+                suggested_args = {
+                    "filepath": filepath,
+                    "sheet_name": summary["sheet_name"],
+                    "start_cell": "A1",
+                    "end_cell": summary.get("used_range", "A1").split(":")[-1],
+                    "values_only": True,
+                    "preview_only": True,
+                }
+                alternatives = [
+                    {
+                        "tool": "profile_workbook",
+                        "reason": "Use workbook orientation first if you need chart, table, or layout context before reading cells.",
+                    }
+                ]
+            else:
+                recommended_tool = "profile_workbook"
+                reason = (
+                    "This sheet looks layout-heavy, so workbook orientation is a safer first step than forcing a tabular read."
+                )
+                confidence = "high"
+                suggested_args = {"filepath": filepath}
+                alternatives = [
+                    {
+                        "tool": "read_data_from_excel",
+                        "reason": "Use a compact cell-range preview next if you need exact grid values from the dashboard area.",
+                    }
+                ]
+        elif _table_dominates_sheet(summary) is not None:
+            dominated_table = _table_dominates_sheet(summary)
+            recommended_tool = "read_excel_table"
+            reason = (
+                f"Worksheet '{summary['sheet_name']}' appears to be primarily driven by native table '{dominated_table['table_name']}'."
+            )
+            confidence = "high"
+            suggested_args = {
+                "filepath": filepath,
+                "table_name": dominated_table["table_name"],
+                "sheet_name": summary["sheet_name"],
+                "row_mode": "objects",
+                "infer_schema": True,
+            }
+            page_size = _strategy_page_size(dominated_table["data_row_count"])
+            if page_size is not None:
+                suggested_args["max_rows"] = page_size
+            alternatives = [
+                {
+                    "tool": "quick_read",
+                    "reason": "Use only if you explicitly want worksheet rows instead of table-bound reads.",
+                }
+            ]
+        else:
+            recommended_tool = "quick_read"
+            reason = (
+                f"Worksheet '{summary['sheet_name']}' looks like a regular header-based dataset without requiring native table semantics."
+            )
+            confidence = "medium" if summary["header_profile"]["confidence"] == "medium" else "high"
+            suggested_args = {
+                "filepath": filepath,
+                "sheet_name": summary["sheet_name"],
+                "row_mode": "objects",
+                "infer_schema": True,
+            }
+            page_size = _strategy_page_size(summary["total_rows"])
+            if page_size is not None:
+                suggested_args["max_rows"] = page_size
+            alternatives = [
+                {
+                    "tool": "read_excel_as_table",
+                    "reason": "Use when you need the same worksheet read path but want explicit sheet-only table semantics.",
+                },
+                {
+                    "tool": "read_data_from_excel",
+                    "reason": "Use when cell addresses or sparse ranges matter more than header-based rows.",
+                },
+            ]
+
+        return {
+            "goal": goal,
+            "normalized_goal": normalized_goal,
+            "target_kind": summary["target_kind"],
+            "dataset_kind": summary["dataset_kind"],
+            "sheet_name": summary.get("sheet_name"),
+            "table_name": summary.get("table_name"),
+            "auto_selected_sheet": summary.get("auto_selected_sheet", False),
+            "recommended_tool": recommended_tool,
+            "confidence": confidence,
+            "reason": reason,
+            "suggested_args": suggested_args,
+            "alternatives": alternatives,
+            "observations": observations,
+        }
+    except DataError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to suggest read strategy: {e}")
+        raise DataError(str(e))
 
 
 def _encode_range_read_cursor(
