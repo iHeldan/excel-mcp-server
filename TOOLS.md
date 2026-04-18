@@ -173,6 +173,8 @@ Returns matches under `data.matches`:
   Returns workbook metadata under the shared JSON envelope.
 - `profile_workbook(filepath: str) -> str`
   Returns a workbook inventory with per-sheet summaries for visibility, freeze panes, autofilters, protection, tables, charts, print settings, and lightweight workbook-level counts. Grid-anchored worksheet charts include anchor, dimensions, and `occupied_range` for layout-aware follow-up steps.
+- `describe_sheet_layout(filepath: str, sheet_name: str, sample_limit: int = 10, free_canvas_rows: int = 8, free_canvas_cols: int = 6, free_canvas_limit: int = 3) -> str`
+  Returns a compact structural summary for one worksheet, including used range, freeze panes, autofilters, print settings, protection, merged ranges, tables, chart anchors, validation and conditional-format rule counts, custom column widths and row heights, plus a small `free_canvas_preview` for dashboard-safe follow-up placement.
 - `audit_workbook(filepath: str, header_row: int = 1, sample_limit: int = 25) -> str`
   Audits workbook structure for high-signal issues that affect agent workflows. The response includes workbook summary counts, per-sheet assessments with recommended read tools, a sampled finding list grouped by severity/code, and deduplicated recommended actions.
 - `plan_workbook_repairs(filepath: str, header_row: int = 1, sample_limit: int = 25) -> str`
@@ -254,6 +256,8 @@ Returns matches under `data.matches`:
   Applies formatting options to a cell or range and supports preview mode. Returns compact summaries by default on committed writes.
 - `format_ranges(filepath: str, sheet_name: str, ranges: List[Dict[str, Any]], dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
   Applies formatting to multiple ranges in one workbook pass. Each range object uses the same option keys as `format_range`, such as `start_cell`, `end_cell`, `bold`, `font_size`, `bg_color`, or `conditional_format`. Invalid operations are reported under `errors` while successful ranges still apply.
+- `read_range_formatting(filepath: str, sheet_name: str, range_ref: str, sample_limit: int = 10) -> str`
+  Reads a compact formatting summary for a worksheet range. Instead of returning one style object per cell, the response groups the range into distinct `style_groups` with sample cells, reports overlapping merged ranges and conditional-format rules, and warns when the sampled style groups were truncated.
 - `conditional_format` rule parameters
   You can pass rule parameters either under `conditional_format.params` or directly as top-level keys alongside `type`. Nested `params` win if both are present.
 - `conditional_format` example

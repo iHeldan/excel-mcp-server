@@ -7,7 +7,7 @@ If you are looking for an Excel MCP server for spreadsheet automation, workbook 
 Package name: `sheetforge-mcp`
 CLI command: `sheetforge-mcp`
 Published package release: `0.5.0`
-Repository docs track the current main-branch tool surface, which currently exposes `66` MCP tools.
+Repository docs track the current main-branch tool surface, which currently exposes `68` MCP tools.
 
 ## Excel MCP Server Features
 
@@ -114,12 +114,12 @@ http://127.0.0.1:8017/sse
 
 ## Tooling Overview
 
-The server currently registers 66 MCP tools across these groups:
+The server currently registers 68 MCP tools across these groups:
 
-- workbook overview: `create_workbook`, `create_worksheet`, `get_workbook_metadata`, `profile_workbook`, `audit_workbook`, `plan_workbook_repairs`, `apply_workbook_repairs`, `diff_workbooks`, `analyze_range_impact`, `explain_formula_cell`, `inspect_named_range`, `list_named_ranges`, `delete_named_range`, `list_all_sheets`, `list_tables`
+- workbook overview: `create_workbook`, `create_worksheet`, `get_workbook_metadata`, `profile_workbook`, `describe_sheet_layout`, `audit_workbook`, `plan_workbook_repairs`, `apply_workbook_repairs`, `diff_workbooks`, `analyze_range_impact`, `explain_formula_cell`, `inspect_named_range`, `list_named_ranges`, `delete_named_range`, `list_all_sheets`, `list_tables`
 - data access: `suggest_read_strategy`, `describe_dataset`, `query_table`, `aggregate_table`, `quick_read`, `read_excel_table`, `read_data_from_excel`, `read_excel_as_table`, `search_in_sheet`, `write_data_to_excel`, `append_table_rows`, `upsert_excel_table_rows`, `update_rows_by_key`
 - worksheet and range changes: `copy_worksheet`, `delete_worksheet`, `rename_worksheet`, `set_worksheet_visibility`, `get_worksheet_protection`, `set_worksheet_protection`, `copy_range`, `delete_range`, `insert_rows`, `insert_columns`, `delete_sheet_rows`, `delete_sheet_columns`
-- formatting and layout: `format_range`, `format_ranges`, `freeze_panes`, `set_autofilter`, `set_print_area`, `set_print_titles`, `set_column_widths`, `autofit_columns`, `set_row_heights`, `merge_cells`, `unmerge_cells`, `get_merged_cells`
+- formatting and layout: `format_range`, `format_ranges`, `read_range_formatting`, `freeze_panes`, `set_autofilter`, `set_print_area`, `set_print_titles`, `set_column_widths`, `autofit_columns`, `set_row_heights`, `merge_cells`, `unmerge_cells`, `get_merged_cells`
 - formulas and validation: `apply_formula`, `validate_formula_syntax`, `validate_excel_range`, `get_data_validation_info`, `inspect_data_validation_rules`, `remove_data_validation_rules`, `inspect_conditional_format_rules`, `remove_conditional_format_rules`
 - analysis and structure: `create_table`, `list_charts`, `find_free_canvas`, `create_chart`, `create_chart_from_series`, `create_pivot_table`
 
@@ -139,6 +139,7 @@ The most agent-friendly read tools are:
 - `query_table`: filters, projects, sorts, and limits worksheet-shaped data or native Excel tables with a declarative JSON query instead of ad hoc cell loops
 - `aggregate_table`: computes grouped metrics such as `count`, `sum`, `avg`, `min`, and `max` over worksheet-shaped data or native Excel tables
 - `profile_workbook`: one-call inventory for sheets, tables, charts, named ranges, and key layout/protection state, including chart `occupied_range` for grid-anchored worksheet charts
+- `describe_sheet_layout`: worksheet-level structural summary for safe dashboard edits, including freeze panes, print settings, merges, chart anchors, table metadata, conditional-format and validation counts, custom row/column sizing, and a small free-canvas preview
 - `audit_workbook`: workbook-level audit for high-signal problems such as broken `#REF!` formulas, error cells, hidden sheets, header-quality issues, layout-heavy sheets, and named ranges that reference missing sheets
 - `plan_workbook_repairs`: converts workbook audit findings into prioritized next steps, including suggested SheetForge tool calls for inspection, safe dry runs, and repair workflows
 - `apply_workbook_repairs`: dry-runs or applies the safe repair subset from those plans, including broken named ranges, broken validation rules, broken conditional formats, and optional hidden-sheet reveals
@@ -151,6 +152,7 @@ The most agent-friendly read tools are:
 - `list_all_sheets`: quick workbook inventory with sheet sizes, emptiness flags, and `sheet_type` for worksheets versus chart sheets
 - `read_excel_as_table`: compact `headers + rows` output for structured datasets, with `compact=True` for the smallest payload, `start_row` for page-like reads, and `start_col` / `end_col` for narrower column slices
 - `read_data_from_excel`: cell-address-aware range reader that supports `max_rows` and `max_cols` windowing for large non-tabular ranges, `values_only=True` for smaller 2D payloads, and cursor-based continuations for multi-step 2D traversal
+- `read_range_formatting`: compact formatting readback for a worksheet range, grouped by distinct style signatures instead of noisy per-cell dumps, with merged-range and conditional-format overlap summaries
 - `search_in_sheet`: exact or partial value search across a worksheet
 
 Workbook inventory tools such as `list_all_sheets`, `profile_workbook`, and `list_charts` surface both worksheets and chart sheets. Grid-oriented tools such as `quick_read`, `read_excel_table`, `create_table`, formatting, formulas, and validation require a real worksheet and return a clear chartsheet error if you target the wrong sheet type.

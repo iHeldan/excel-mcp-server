@@ -8,15 +8,19 @@ from excel_mcp.server import freeze_panes as freeze_panes_tool
 from excel_mcp.server import list_named_ranges as list_named_ranges_tool
 from excel_mcp.server import merge_cells as merge_cells_tool
 from excel_mcp.server import autofit_columns as autofit_columns_tool
+from excel_mcp.server import describe_sheet_layout as describe_sheet_layout_tool
 from excel_mcp.server import get_worksheet_protection as get_worksheet_protection_tool
 from excel_mcp.server import set_print_area as set_print_area_tool
 from excel_mcp.server import set_print_titles as set_print_titles_tool
+from excel_mcp.server import read_range_formatting as read_range_formatting_tool
 from excel_mcp.server import set_column_widths as set_column_widths_tool
 from excel_mcp.server import set_row_heights as set_row_heights_tool
 from excel_mcp.server import set_worksheet_protection as set_worksheet_protection_tool
 from excel_mcp.server import set_worksheet_visibility as set_worksheet_visibility_tool
 from excel_mcp.server import set_autofilter as set_autofilter_tool
 from excel_mcp.server import unmerge_cells as unmerge_cells_tool
+from excel_mcp.formatting import format_range as apply_range_formatting
+from excel_mcp.formatting import read_range_formatting as read_range_formatting_impl
 from excel_mcp.sheet import (
     delete_cols,
     delete_rows,
@@ -36,8 +40,9 @@ from excel_mcp.sheet import (
     unmerge_range,
 )
 from excel_mcp.tables import create_excel_table
-from excel_mcp.exceptions import ValidationError
+from excel_mcp.exceptions import ValidationError, WorkbookError
 from excel_mcp.workbook import list_named_ranges
+from excel_mcp.workbook import describe_sheet_layout as describe_sheet_layout_impl
 
 
 def _load_tool_payload(raw: str) -> dict:
@@ -117,6 +122,108 @@ def test_unmerge_range_can_include_changes_explicitly(tmp_workbook):
     result = unmerge_range(tmp_workbook, "Sheet1", "A1", "B1", include_changes=True)
 
     assert result["changes"][0]["range"] == "A1:B1"
+
+
+def test_read_range_formatting_groups_styles_and_rules(tmp_workbook):
+    apply_range_formatting(
+        tmp_workbook,
+        "Sheet1",
+        "A1",
+        "C1",
+        bold=True,
+        bg_color="FFF2CC",
+    )
+    apply_range_formatting(
+        tmp_workbook,
+        "Sheet1",
+        "B2",
+        "B3",
+        number_format="0.0%",
+        alignment="center",
+        wrap_text=True,
+        protection={"locked": False},
+    )
+    apply_range_formatting(
+        tmp_workbook,
+        "Sheet1",
+        "C2",
+        "C4",
+        conditional_format={
+            "type": "formula",
+            "formula": ["$B2>20"],
+        },
+    )
+    merge_range(tmp_workbook, "Sheet1", "A5", "B5")
+
+    result = read_range_formatting_impl(tmp_workbook, "Sheet1", "A1:C5")
+
+    assert result["range"] == "A1:C5"
+    assert result["summary"]["style_group_count"] >= 2
+    assert result["summary"]["has_conditional_formatting"] is True
+    assert result["summary"]["has_merged_ranges"] is True
+    assert result["merged_ranges"]["count"] == 1
+    assert result["conditional_formats"]["count"] == 1
+    assert any(group["font"]["bold"] is True for group in result["style_groups"])
+    assert any(group.get("number_format") == "0.0%" for group in result["style_groups"])
+
+
+def test_read_range_formatting_rejects_chartsheets(complex_workbook):
+    with pytest.raises(ValidationError, match="chartsheet"):
+        read_range_formatting_impl(complex_workbook, "Charts", "A1:B2")
+
+
+def test_read_range_formatting_tool_returns_envelope(tmp_workbook):
+    raw = read_range_formatting_tool(tmp_workbook, "Sheet1", "A1:B2", sample_limit=3)
+    payload = _load_tool_payload(raw)
+
+    assert payload["operation"] == "read_range_formatting"
+    assert payload["data"]["range"] == "A1:B2"
+    assert "style_groups" in payload["data"]
+
+
+def test_describe_sheet_layout_summarizes_dashboard_structure(complex_workbook):
+    result = describe_sheet_layout_impl(
+        complex_workbook,
+        "Dashboard",
+        sample_limit=5,
+        free_canvas_rows=4,
+        free_canvas_cols=4,
+        free_canvas_limit=2,
+    )
+
+    assert result["sheet_name"] == "Dashboard"
+    assert result["freeze_panes"] == "A2"
+    assert result["summary"]["chart_count"] == 1
+    assert result["summary"]["merged_range_count"] == 1
+    assert result["summary"]["data_validation_rule_count"] == 1
+    assert result["summary"]["conditional_format_rule_count"] == 1
+    assert result["charts"]["sample"][0]["anchor"] == "E2"
+    assert result["free_canvas_preview"]["requested_block"] == {"rows": 4, "columns": 4}
+    assert len(result["free_canvas_preview"]["suggestions"]) <= 2
+
+
+def test_describe_sheet_layout_reports_custom_dimensions(tmp_workbook):
+    set_column_widths(tmp_workbook, "Sheet1", {"A": 18})
+    set_row_heights(tmp_workbook, "Sheet1", {"1": 24})
+
+    result = describe_sheet_layout_impl(tmp_workbook, "Sheet1", sample_limit=5)
+
+    assert result["custom_column_widths"]["count"] >= 1
+    assert result["custom_row_heights"]["count"] >= 1
+
+
+def test_describe_sheet_layout_rejects_chartsheets(complex_workbook):
+    with pytest.raises(WorkbookError, match="chartsheet"):
+        describe_sheet_layout_impl(complex_workbook, "Charts")
+
+
+def test_describe_sheet_layout_tool_returns_envelope(complex_workbook):
+    raw = describe_sheet_layout_tool(complex_workbook, "Dashboard", sample_limit=3)
+    payload = _load_tool_payload(raw)
+
+    assert payload["operation"] == "describe_sheet_layout"
+    assert payload["data"]["sheet_name"] == "Dashboard"
+    assert payload["data"]["summary"]["chart_count"] == 1
 
 
 @pytest.mark.parametrize(

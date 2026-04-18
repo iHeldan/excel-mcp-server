@@ -1,6 +1,8 @@
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
+from openpyxl.cell.cell import MergedCell
 from openpyxl.styles import (
     PatternFill, Border, Side, Alignment, Protection, Font,
     Color
@@ -9,9 +11,15 @@ from openpyxl.formatting.rule import (
     ColorScaleRule, DataBarRule, IconSetRule,
     FormulaRule, CellIsRule
 )
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
-from .workbook import require_worksheet, safe_workbook
+from .workbook import (
+    _extract_conditional_format_overlaps,
+    _parse_range_reference,
+    require_worksheet,
+    safe_workbook,
+)
 from .cell_utils import parse_cell_range, validate_cell_reference
 from .exceptions import ValidationError, FormattingError
 
@@ -22,6 +30,307 @@ def _should_include_changes(dry_run: bool, include_changes: Optional[bool]) -> b
     if include_changes is None:
         return dry_run
     return include_changes
+
+
+def _validate_positive_integer(value: Any, *, argument_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValidationError(f"{argument_name} must be a positive integer")
+    return value
+
+
+def _serialize_color_token(color: Any) -> Optional[str]:
+    if color is None:
+        return None
+
+    color_type = getattr(color, "type", None)
+    if color_type == "rgb":
+        rgb = getattr(color, "rgb", None)
+        return str(rgb) if rgb else None
+    if color_type == "theme":
+        theme = getattr(color, "theme", None)
+        if theme is None:
+            return None
+        tint = getattr(color, "tint", None)
+        return (
+            f"theme:{theme},tint:{tint}"
+            if tint not in (None, 0, 0.0)
+            else f"theme:{theme}"
+        )
+    if color_type == "indexed":
+        indexed = getattr(color, "indexed", None)
+        return None if indexed is None else f"indexed:{indexed}"
+    if color_type == "auto" and getattr(color, "auto", False):
+        return "auto"
+    return None
+
+
+def _serialize_font(font: Any) -> dict[str, Any]:
+    return {
+        "name": getattr(font, "name", None),
+        "size": getattr(font, "size", None),
+        "bold": bool(getattr(font, "bold", False)),
+        "italic": bool(getattr(font, "italic", False)),
+        "underline": getattr(font, "underline", None),
+        "color": _serialize_color_token(getattr(font, "color", None)),
+    }
+
+
+def _serialize_fill(fill: Any) -> Optional[dict[str, Any]]:
+    fill_type = getattr(fill, "fill_type", None) or getattr(fill, "patternType", None)
+    fg_color = _serialize_color_token(getattr(fill, "fgColor", None))
+    bg_color = _serialize_color_token(getattr(fill, "bgColor", None))
+    if fill_type is None and fg_color is None and bg_color is None:
+        return None
+    return {
+        "fill_type": fill_type,
+        "fg_color": fg_color,
+        "bg_color": bg_color,
+    }
+
+
+def _serialize_side(side: Any) -> Optional[dict[str, Any]]:
+    style = getattr(side, "style", None)
+    color = _serialize_color_token(getattr(side, "color", None))
+    if style is None and color is None:
+        return None
+    return {
+        "style": style,
+        "color": color,
+    }
+
+
+def _serialize_border(border: Any) -> Optional[dict[str, Any]]:
+    serialized = {
+        "left": _serialize_side(getattr(border, "left", None)),
+        "right": _serialize_side(getattr(border, "right", None)),
+        "top": _serialize_side(getattr(border, "top", None)),
+        "bottom": _serialize_side(getattr(border, "bottom", None)),
+    }
+    if not any(value is not None for value in serialized.values()):
+        return None
+    return serialized
+
+
+def _serialize_alignment(alignment: Any) -> Optional[dict[str, Any]]:
+    if alignment is None:
+        return None
+
+    serialized = {
+        "horizontal": getattr(alignment, "horizontal", None),
+        "vertical": getattr(alignment, "vertical", None),
+        "text_rotation": getattr(alignment, "text_rotation", 0) or 0,
+        "wrap_text": bool(getattr(alignment, "wrap_text", False)),
+        "shrink_to_fit": bool(getattr(alignment, "shrink_to_fit", False)),
+    }
+    if not any(
+        [
+            serialized["horizontal"],
+            serialized["vertical"],
+            serialized["text_rotation"],
+            serialized["wrap_text"],
+            serialized["shrink_to_fit"],
+        ]
+    ):
+        return None
+    return serialized
+
+
+def _serialize_protection(protection: Any) -> Optional[dict[str, Any]]:
+    if protection is None:
+        return None
+
+    locked = getattr(protection, "locked", None)
+    hidden = getattr(protection, "hidden", None)
+    if locked in (None, True) and hidden in (None, False):
+        return None
+    return {
+        "locked": None if locked is None else bool(locked),
+        "hidden": None if hidden is None else bool(hidden),
+    }
+
+
+def _serialize_cell_style(cell: Any) -> dict[str, Any]:
+    style: dict[str, Any] = {
+        "font": _serialize_font(cell.font),
+    }
+
+    fill = _serialize_fill(cell.fill)
+    if fill is not None:
+        style["fill"] = fill
+
+    border = _serialize_border(cell.border)
+    if border is not None:
+        style["border"] = border
+
+    if cell.number_format not in (None, "", "General"):
+        style["number_format"] = cell.number_format
+
+    alignment = _serialize_alignment(cell.alignment)
+    if alignment is not None:
+        style["alignment"] = alignment
+
+    protection = _serialize_protection(cell.protection)
+    if protection is not None:
+        style["protection"] = protection
+
+    return style
+
+
+def _style_signature(style: dict[str, Any]) -> str:
+    return json.dumps(style, sort_keys=True, separators=(",", ":"))
+
+
+def _range_size(bounds: tuple[int, int, int, int]) -> int:
+    min_row, min_col, max_row, max_col = bounds
+    return (max_row - min_row + 1) * (max_col - min_col + 1)
+
+
+def _merged_range_overlaps(
+    sheet: Worksheet,
+    *,
+    target_bounds: tuple[int, int, int, int],
+) -> list[str]:
+    min_row, min_col, max_row, max_col = target_bounds
+    overlaps: list[str] = []
+    for merged_range in sheet.merged_cells.ranges:
+        merged_min_col, merged_min_row, merged_max_col, merged_max_row = (
+            merged_range.bounds
+        )
+        if (
+            merged_max_row < min_row
+            or merged_min_row > max_row
+            or merged_max_col < min_col
+            or merged_min_col > max_col
+        ):
+            continue
+        overlaps.append(str(merged_range))
+    return overlaps
+
+
+def read_range_formatting(
+    filepath: str,
+    sheet_name: str,
+    range_ref: str,
+    sample_limit: int = 10,
+) -> Dict[str, Any]:
+    """Read a compact formatting summary for a worksheet range."""
+    try:
+        _validate_positive_integer(sample_limit, argument_name="sample_limit")
+
+        with safe_workbook(filepath) as wb:
+            sheet = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=ValidationError,
+                operation="formatting inspection",
+            )
+            bounds, normalized_range = _parse_range_reference(
+                range_ref,
+                worksheet=sheet,
+                expected_sheet=sheet_name,
+                error_cls=ValidationError,
+            )
+
+            min_row, min_col, max_row, max_col = bounds
+            style_groups: dict[str, dict[str, Any]] = {}
+            inspected_cell_count = 0
+            merged_placeholder_count = 0
+
+            for row in sheet.iter_rows(
+                min_row=min_row,
+                max_row=max_row,
+                min_col=min_col,
+                max_col=max_col,
+            ):
+                for cell in row:
+                    if isinstance(cell, MergedCell):
+                        merged_placeholder_count += 1
+                        continue
+
+                    inspected_cell_count += 1
+                    style = _serialize_cell_style(cell)
+                    signature = _style_signature(style)
+                    group = style_groups.setdefault(
+                        signature,
+                        {
+                            "style": style,
+                            "cell_count": 0,
+                            "sample_cells": [],
+                        },
+                    )
+                    group["cell_count"] += 1
+                    if len(group["sample_cells"]) < 5:
+                        group["sample_cells"].append(
+                            f"{get_column_letter(cell.column)}{cell.row}"
+                        )
+
+            sorted_groups = sorted(
+                style_groups.values(),
+                key=lambda group: (-group["cell_count"], group["sample_cells"][0]),
+            )
+            style_group_sample = []
+            for style_index, group in enumerate(sorted_groups[:sample_limit], start=1):
+                style_group_sample.append(
+                    {
+                        "style_index": style_index,
+                        "cell_count": group["cell_count"],
+                        "sample_cells": group["sample_cells"],
+                        **group["style"],
+                    }
+                )
+
+            conditional_formats = _extract_conditional_format_overlaps(
+                sheet,
+                sheet_name=sheet_name,
+                target_bounds=bounds,
+            )
+            merged_ranges = _merged_range_overlaps(sheet, target_bounds=bounds)
+
+        warnings: list[str] = []
+        if len(sorted_groups) > sample_limit:
+            warnings.append(
+                f"Sampled {sample_limit} of {len(sorted_groups)} style groups; "
+                "increase sample_limit for more detail"
+            )
+        if len(conditional_formats) > sample_limit:
+            warnings.append(
+                f"Sampled {sample_limit} of {len(conditional_formats)} overlapping conditional-format rules"
+            )
+        if len(merged_ranges) > sample_limit:
+            warnings.append(
+                f"Sampled {sample_limit} of {len(merged_ranges)} overlapping merged ranges"
+            )
+
+        result = {
+            "sheet_name": sheet_name,
+            "range": normalized_range,
+            "cell_count": _range_size(bounds),
+            "inspected_cell_count": inspected_cell_count,
+            "merged_placeholder_count": merged_placeholder_count,
+            "summary": {
+                "style_group_count": len(sorted_groups),
+                "uniform_formatting": len(sorted_groups) <= 1,
+                "has_conditional_formatting": bool(conditional_formats),
+                "has_merged_ranges": bool(merged_ranges),
+            },
+            "style_groups": style_group_sample,
+            "merged_ranges": {
+                "count": len(merged_ranges),
+                "sample": merged_ranges[:sample_limit],
+            },
+            "conditional_formats": {
+                "count": len(conditional_formats),
+                "sample": conditional_formats[:sample_limit],
+            },
+        }
+        if warnings:
+            result["warnings"] = warnings
+        return result
+    except (ValidationError, FormattingError):
+        raise
+    except Exception as e:
+        logger.error(f"Failed to read range formatting: {e}")
+        raise FormattingError(str(e))
 
 
 def _build_format_preview(

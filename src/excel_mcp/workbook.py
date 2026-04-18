@@ -7,7 +7,7 @@ from typing import Any
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.formula.tokenizer import Tokenizer
-from openpyxl.utils import get_column_letter, range_boundaries
+from openpyxl.utils import column_index_from_string, get_column_letter, range_boundaries
 from openpyxl.worksheet.worksheet import Worksheet
 
 from .exceptions import WorkbookError
@@ -2189,6 +2189,235 @@ def profile_workbook(filepath: str) -> dict[str, Any]:
         raise
     except Exception as e:
         logger.error(f"Failed to profile workbook: {e}")
+        raise WorkbookError(str(e))
+
+
+def _validate_positive_int(value: Any, *, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise WorkbookError(f"{label} must be a positive integer")
+    return value
+
+
+def _sample_payload(
+    items: list[Any],
+    *,
+    sample_limit: int,
+) -> dict[str, Any]:
+    return {
+        "count": len(items),
+        "sample": items[:sample_limit],
+    }
+
+
+def _custom_column_layout(ws: Worksheet) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for column_key, dimension in ws.column_dimensions.items():
+        width = getattr(dimension, "width", None)
+        hidden = bool(getattr(dimension, "hidden", False))
+        if width is None and not hidden:
+            continue
+
+        column_letter = str(getattr(dimension, "index", None) or column_key).upper()
+        try:
+            sort_index = column_index_from_string(column_letter)
+        except ValueError:
+            continue
+
+        entries.append(
+            {
+                "column": column_letter,
+                "width": float(width) if width is not None else None,
+                "hidden": hidden,
+                "outline_level": int(getattr(dimension, "outlineLevel", 0) or 0),
+                "_sort_index": sort_index,
+            }
+        )
+
+    entries.sort(key=lambda entry: entry["_sort_index"])
+    for entry in entries:
+        entry.pop("_sort_index", None)
+    return entries
+
+
+def _custom_row_layout(ws: Worksheet) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for row_key, dimension in ws.row_dimensions.items():
+        height = getattr(dimension, "height", None)
+        hidden = bool(getattr(dimension, "hidden", False))
+        if height is None and not hidden:
+            continue
+        try:
+            row_index = int(row_key)
+        except (TypeError, ValueError):
+            continue
+
+        entries.append(
+            {
+                "row": row_index,
+                "height": float(height) if height is not None else None,
+                "hidden": hidden,
+                "outline_level": int(getattr(dimension, "outlineLevel", 0) or 0),
+            }
+        )
+
+    entries.sort(key=lambda entry: entry["row"])
+    return entries
+
+
+def describe_sheet_layout(
+    filepath: str,
+    sheet_name: str,
+    sample_limit: int = 10,
+    free_canvas_rows: int = 8,
+    free_canvas_cols: int = 6,
+    free_canvas_limit: int = 3,
+) -> dict[str, Any]:
+    """Return a compact structural summary for one worksheet."""
+    try:
+        _validate_positive_int(sample_limit, label="sample_limit")
+        _validate_positive_int(free_canvas_rows, label="free_canvas_rows")
+        _validate_positive_int(free_canvas_cols, label="free_canvas_cols")
+        _validate_positive_int(free_canvas_limit, label="free_canvas_limit")
+
+        with safe_workbook(filepath) as wb:
+            ws = require_worksheet(
+                wb,
+                sheet_name,
+                error_cls=WorkbookError,
+                operation="sheet-layout inspection",
+            )
+            from .chart import (
+                _chart_occupied_range,
+                _chart_type_name,
+                _extract_chart_anchor,
+                _extract_chart_dimensions,
+                _extract_title_text,
+                _find_free_canvas_slots_in_worksheet,
+            )
+            from .sheet import (
+                _display_print_title_columns,
+                _display_print_title_rows,
+                _sheet_protection_state,
+            )
+            from .tables import _build_table_metadata
+
+            rows, columns, column_range, is_empty = _get_sheet_usage(ws)
+            merged_ranges = [str(merged_range) for merged_range in ws.merged_cells.ranges]
+            tables = [
+                _build_table_metadata(sheet_name, ws, table)
+                for table in ws.tables.values()
+            ]
+            charts: list[dict[str, Any]] = []
+            for chart_index, chart in enumerate(getattr(ws, "_charts", []), start=1):
+                width, height = _extract_chart_dimensions(chart)
+                anchor = _extract_chart_anchor(chart)
+                series = getattr(chart, "ser", None) or list(getattr(chart, "series", []))
+                chart_info = {
+                    "chart_index": chart_index,
+                    "chart_type": _chart_type_name(chart),
+                    "anchor": anchor,
+                    "title": _extract_title_text(getattr(chart, "title", None)),
+                    "width": width,
+                    "height": height,
+                    "series_count": len(series),
+                }
+                if anchor and width and height:
+                    chart_info["occupied_range"] = _chart_occupied_range(
+                        ws,
+                        anchor,
+                        width=width,
+                        height=height,
+                    )
+                charts.append({key: value for key, value in chart_info.items() if value is not None})
+
+            validation_rules = _inspect_validation_rules(
+                wb,
+                ws=ws,
+                sheet_name=sheet_name,
+            )
+            conditional_rules = _inspect_conditional_format_rules(
+                wb,
+                ws=ws,
+                sheet_name=sheet_name,
+            )
+            free_canvas_preview = _find_free_canvas_slots_in_worksheet(
+                ws,
+                min_rows=free_canvas_rows,
+                min_cols=free_canvas_cols,
+                limit=free_canvas_limit,
+            )
+            free_canvas_preview["requested_block"] = {
+                "rows": free_canvas_rows,
+                "columns": free_canvas_cols,
+            }
+
+            custom_column_widths = _custom_column_layout(ws)
+            custom_row_heights = _custom_row_layout(ws)
+            visibility = ws.sheet_state
+            used_range = _get_used_range(ws)
+            freeze_panes = _freeze_panes_value(ws)
+            autofilter_range = ws.auto_filter.ref or None
+            print_area = ws.print_area or None
+            print_title_rows = _display_print_title_rows(ws)
+            print_title_columns = _display_print_title_columns(ws)
+            protection = _sheet_protection_state(ws)
+
+        warnings: list[str] = []
+        sampled_groups = {
+            "merged_ranges": len(merged_ranges),
+            "tables": len(tables),
+            "charts": len(charts),
+            "data_validation_rules": len(validation_rules),
+            "conditional_format_rules": len(conditional_rules),
+            "custom_column_widths": len(custom_column_widths),
+            "custom_row_heights": len(custom_row_heights),
+        }
+        for label, count in sampled_groups.items():
+            if count > sample_limit:
+                warnings.append(
+                    f"Sampled {sample_limit} of {count} {label.replace('_', ' ')}"
+                )
+
+        result = {
+            "sheet_name": sheet_name,
+            "sheet_type": "worksheet",
+            "visibility": visibility,
+            "rows": rows,
+            "columns": columns,
+            "column_range": column_range,
+            "used_range": used_range,
+            "is_empty": is_empty,
+            "freeze_panes": freeze_panes,
+            "autofilter_range": autofilter_range,
+            "print_area": print_area,
+            "print_title_rows": print_title_rows,
+            "print_title_columns": print_title_columns,
+            "protection": protection,
+            "summary": {
+                "merged_range_count": len(merged_ranges),
+                "table_count": len(tables),
+                "chart_count": len(charts),
+                "data_validation_rule_count": len(validation_rules),
+                "conditional_format_rule_count": len(conditional_rules),
+                "custom_column_width_count": len(custom_column_widths),
+                "custom_row_height_count": len(custom_row_heights),
+            },
+            "merged_ranges": _sample_payload(merged_ranges, sample_limit=sample_limit),
+            "tables": _sample_payload(tables, sample_limit=sample_limit),
+            "charts": _sample_payload(charts, sample_limit=sample_limit),
+            "data_validation_rules": _sample_payload(validation_rules, sample_limit=sample_limit),
+            "conditional_format_rules": _sample_payload(conditional_rules, sample_limit=sample_limit),
+            "custom_column_widths": _sample_payload(custom_column_widths, sample_limit=sample_limit),
+            "custom_row_heights": _sample_payload(custom_row_heights, sample_limit=sample_limit),
+            "free_canvas_preview": free_canvas_preview,
+        }
+        if warnings:
+            result["warnings"] = warnings
+        return result
+    except WorkbookError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to describe sheet layout: {e}")
         raise WorkbookError(str(e))
 
 

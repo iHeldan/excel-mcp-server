@@ -35,6 +35,7 @@ from excel_mcp.workbook import (
     analyze_range_impact as analyze_range_impact_impl,
     audit_workbook as audit_workbook_impl,
     delete_named_range as delete_named_range_impl,
+    describe_sheet_layout as describe_sheet_layout_impl,
     diff_workbooks as diff_workbooks_impl,
     explain_formula_cell as explain_formula_cell_impl,
     get_workbook_info,
@@ -467,6 +468,34 @@ def format_ranges(
         )
 
     return _run_tool("format_ranges", action)
+
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Read Range Formatting",
+        readOnlyHint=True,
+    ),
+)
+def read_range_formatting(
+    filepath: str,
+    sheet_name: str,
+    range_ref: str,
+    sample_limit: int = 10,
+) -> str:
+    """Read a compact formatting summary for a worksheet range."""
+    def action() -> Any:
+        full_path = get_excel_path(filepath)
+        from excel_mcp.formatting import read_range_formatting as read_range_formatting_impl
+
+        return read_range_formatting_impl(
+            filepath=full_path,
+            sheet_name=sheet_name,
+            range_ref=range_ref,
+            sample_limit=sample_limit,
+        )
+
+    return _run_tool("read_range_formatting", action)
 
 @mcp.tool(
     structured_output=False,
@@ -1184,6 +1213,35 @@ def get_workbook_metadata(
     return _run_tool(
         "get_workbook_metadata",
         lambda: get_workbook_info(get_excel_path(filepath), include_ranges=include_ranges),
+    )
+
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Describe Sheet Layout",
+        readOnlyHint=True,
+    ),
+)
+def describe_sheet_layout(
+    filepath: str,
+    sheet_name: str,
+    sample_limit: int = 10,
+    free_canvas_rows: int = 8,
+    free_canvas_cols: int = 6,
+    free_canvas_limit: int = 3,
+) -> str:
+    """Return a structural worksheet layout summary for safe dashboard-style edits."""
+    return _run_tool(
+        "describe_sheet_layout",
+        lambda: describe_sheet_layout_impl(
+            get_excel_path(filepath),
+            sheet_name=sheet_name,
+            sample_limit=sample_limit,
+            free_canvas_rows=free_canvas_rows,
+            free_canvas_cols=free_canvas_cols,
+            free_canvas_limit=free_canvas_limit,
+        ),
     )
 
 
