@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.5.0 - 2026-04-18
+
+This minor release expands SheetForge MCP from workbook CRUD into a stronger workbook-analysis and large-read workflow for AI agents and automation pipelines.
+
 ### Added
 
 - Added `next_start_row` to truncated tabular read responses so agents can continue pagination without recalculating offsets.

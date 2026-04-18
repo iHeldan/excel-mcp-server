@@ -6,7 +6,7 @@ If you are looking for an Excel MCP server for spreadsheet automation, workbook 
 
 Package name: `sheetforge-mcp`
 CLI command: `sheetforge-mcp`
-Published package release: `0.4.2`
+Published package release: `0.5.0`
 Repository docs track the current main-branch tool surface, which currently exposes `51` MCP tools.
 
 ## Excel MCP Server Features
