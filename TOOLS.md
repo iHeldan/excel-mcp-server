@@ -187,6 +187,8 @@ Returns matches under `data.matches`:
   Inspects workbook structures that overlap a worksheet range before mutation. Reports intersections with native Excel tables, chart footprints, merged ranges, named ranges, worksheet data validations, conditional formatting rules, autofilters, print areas, formula cells inside the range, and downstream formulas or rule expressions elsewhere in the workbook that reference it directly or transitively, through named ranges, or through structured table references such as `Table1[Sales]`, plus a lightweight `risk_level`.
 - `explain_formula_cell(filepath: str, sheet_name: str, cell: str, max_depth: int = 3) -> str`
   Explains a formula cell's direct references, upstream formula-chain cells, and downstream dependent formulas. Named ranges and structured references are resolved to concrete workbook ranges when possible.
+- `detect_circular_dependencies(filepath: str, sample_limit: int = 25) -> str`
+  Detects workbook formula cycles, including self-references and multi-cell dependency loops. Named ranges and structured references are resolved through the workbook graph before cycle analysis, and the response returns compact sampled cycle groups.
 - `inspect_named_range(filepath: str, name: str, scope_sheet: Optional[str] = None) -> str`
   Inspects a defined name, including scope, destinations, hidden state, and whether it points at missing sheets or broken references.
 - `list_named_ranges(filepath: str) -> str`
@@ -237,6 +239,8 @@ Returns matches under `data.matches`:
   Writes a validated Excel formula into the target cell.
 - `validate_formula_syntax(filepath: str, sheet_name: str, cell: str, formula: str) -> str`
   Validates formula syntax without changing the workbook.
+- `inspect_formula(formula: str) -> str`
+  Inspects a formula string without workbook context. Returns function inventory, reference token classification, literal-token counts, and flags for volatile or risky functions such as `INDIRECT`, `WEBSERVICE`, or `RTD`.
 - `validate_excel_range(filepath: str, sheet_name: str, start_cell: str, end_cell: Optional[str] = None) -> str`
   Validates a cell or range reference against the worksheet.
 - `get_data_validation_info(filepath: str, sheet_name: str) -> str`

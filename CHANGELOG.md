@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added `inspect_formula` so agents can classify formula strings before writing them, including function inventory, reference token types, and flags for volatile or risky functions such as `INDIRECT`.
+- Added `detect_circular_dependencies` so agents can scan workbook formula graphs for self-references and multi-cell circular dependency groups, including loops introduced through named ranges.
 - Added `read_range_formatting` so agents can inspect worksheet look-and-feel by grouped style signatures, merged-range overlap, and conditional-format overlap instead of pulling noisy per-cell style dumps into context.
 - Added `describe_sheet_layout` as a worksheet-level structural summary for dashboard-safe edits, including freeze panes, print settings, merges, tables, chart anchors, validation and conditional-format counts, custom dimensions, and a compact free-canvas preview.
 - Added `suggest_read_strategy` so agents can ask SheetForge which read path best fits a workbook target before spending context on the wrong tool.
@@ -16,7 +18,7 @@
 - Added `diff_workbooks` so agents can compare workbook versions with structural changes plus sampled cell-level before/after diffs.
 - Added `explain_formula_cell` so agents can resolve formula inputs through named ranges and structured references, inspect upstream formula chains, and see downstream dependents in one call.
 - Added `inspect_named_range`, `delete_named_range`, `inspect_data_validation_rules`, `remove_data_validation_rules`, `inspect_conditional_format_rules`, and `remove_conditional_format_rules` to turn workbook-repair plans into inspect → dry-run → apply workflows.
-- Refreshed the manifest, README, and landing-page copy for the current 68-tool surface and the newer workbook-repair, workbook-diff, formula-lineage, and layout-introspection helpers.
+- Refreshed the manifest, README, and landing-page copy for the current 70-tool surface and the newer workbook-repair, workbook-diff, formula-lineage, formula-inspection, circular-dependency, and layout-introspection helpers.
 
 ## 0.5.0 - 2026-04-18
 

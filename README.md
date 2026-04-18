@@ -114,13 +114,13 @@ http://127.0.0.1:8017/sse
 
 ## Tooling Overview
 
-The server currently registers 68 MCP tools across these groups:
+The server currently registers 70 MCP tools across these groups:
 
-- workbook overview: `create_workbook`, `create_worksheet`, `get_workbook_metadata`, `profile_workbook`, `describe_sheet_layout`, `audit_workbook`, `plan_workbook_repairs`, `apply_workbook_repairs`, `diff_workbooks`, `analyze_range_impact`, `explain_formula_cell`, `inspect_named_range`, `list_named_ranges`, `delete_named_range`, `list_all_sheets`, `list_tables`
+- workbook overview: `create_workbook`, `create_worksheet`, `get_workbook_metadata`, `profile_workbook`, `describe_sheet_layout`, `audit_workbook`, `plan_workbook_repairs`, `apply_workbook_repairs`, `diff_workbooks`, `analyze_range_impact`, `explain_formula_cell`, `detect_circular_dependencies`, `inspect_named_range`, `list_named_ranges`, `delete_named_range`, `list_all_sheets`, `list_tables`
 - data access: `suggest_read_strategy`, `describe_dataset`, `query_table`, `aggregate_table`, `quick_read`, `read_excel_table`, `read_data_from_excel`, `read_excel_as_table`, `search_in_sheet`, `write_data_to_excel`, `append_table_rows`, `upsert_excel_table_rows`, `update_rows_by_key`
 - worksheet and range changes: `copy_worksheet`, `delete_worksheet`, `rename_worksheet`, `set_worksheet_visibility`, `get_worksheet_protection`, `set_worksheet_protection`, `copy_range`, `delete_range`, `insert_rows`, `insert_columns`, `delete_sheet_rows`, `delete_sheet_columns`
 - formatting and layout: `format_range`, `format_ranges`, `read_range_formatting`, `freeze_panes`, `set_autofilter`, `set_print_area`, `set_print_titles`, `set_column_widths`, `autofit_columns`, `set_row_heights`, `merge_cells`, `unmerge_cells`, `get_merged_cells`
-- formulas and validation: `apply_formula`, `validate_formula_syntax`, `validate_excel_range`, `get_data_validation_info`, `inspect_data_validation_rules`, `remove_data_validation_rules`, `inspect_conditional_format_rules`, `remove_conditional_format_rules`
+- formulas and validation: `apply_formula`, `validate_formula_syntax`, `inspect_formula`, `validate_excel_range`, `get_data_validation_info`, `inspect_data_validation_rules`, `remove_data_validation_rules`, `inspect_conditional_format_rules`, `remove_conditional_format_rules`
 - analysis and structure: `create_table`, `list_charts`, `find_free_canvas`, `create_chart`, `create_chart_from_series`, `create_pivot_table`
 
 For chart authoring, prefer `create_chart` as the primary entry point:
@@ -146,6 +146,8 @@ The most agent-friendly read tools are:
 - `diff_workbooks`: compares two workbook files and reports structural changes plus sampled cell-value diffs, which is useful for before/after verification in agent workflows
 - `analyze_range_impact`: preflight blast-radius check for a worksheet range, including overlaps with tables, chart footprints, merged cells, named ranges, data validations, conditional formats, autofilters, print areas, formula cells inside the range, and formulas or rule expressions elsewhere that depend on it directly or transitively, through named ranges, or through structured table references such as `Table1[Sales]`
 - `explain_formula_cell`: resolves a formula cell's direct references, shows upstream formula-chain cells, and reports downstream dependents so agents can debug workbook logic without manual tracing
+- `detect_circular_dependencies`: scans workbook formula graphs, including named-range-driven edges, and reports self-references plus multi-cell circular dependency groups before they surprise downstream automation
+- `inspect_formula`: inspects a formula string without workbook context, listing functions, reference token types, volatile functions, and risky functions such as `INDIRECT`
 - `inspect_named_range`: inspects one defined name, including its scope, destinations, and whether it points at missing sheets or broken references
 - `quick_read`: single-call compact table read that auto-selects the first sheet when needed, now with `start_row` pagination and `start_col` / `end_col` column windowing for large sheets
 - `read_excel_table`: read a native Excel table by `table_name` without guessing worksheet bounds, now with `start_row` pagination and optional `start_col` / `end_col` table column windowing

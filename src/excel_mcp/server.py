@@ -24,6 +24,7 @@ from excel_mcp.validation import (
     validate_formula_in_cell_operation as validate_formula_impl,
     validate_range_in_sheet_operation as validate_range_impl
 )
+from excel_mcp.calculations import inspect_formula as inspect_formula_impl
 from excel_mcp.chart import (
     create_chart_from_series as create_chart_from_series_impl,
     create_chart_in_sheet as create_chart_impl,
@@ -34,6 +35,7 @@ from excel_mcp.workbook import (
     apply_workbook_repairs as apply_workbook_repairs_impl,
     analyze_range_impact as analyze_range_impact_impl,
     audit_workbook as audit_workbook_impl,
+    detect_circular_dependencies as detect_circular_dependencies_impl,
     delete_named_range as delete_named_range_impl,
     describe_sheet_layout as describe_sheet_layout_impl,
     diff_workbooks as diff_workbooks_impl,
@@ -379,6 +381,24 @@ def validate_formula_syntax(
         "validate_formula_syntax",
         lambda: validate_formula_impl(get_excel_path(filepath), sheet_name, cell, formula),
     )
+
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Inspect Formula",
+        readOnlyHint=True,
+    ),
+)
+def inspect_formula(
+    formula: str,
+) -> str:
+    """Inspect a formula string for functions, references, and risky signals."""
+    return _run_tool(
+        "inspect_formula",
+        lambda: inspect_formula_impl(formula),
+    )
+
 
 @mcp.tool(
     structured_output=False,
@@ -1285,6 +1305,27 @@ def explain_formula_cell(
             sheet_name,
             cell,
             max_depth=max_depth,
+        ),
+    )
+
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Detect Circular Dependencies",
+        readOnlyHint=True,
+    ),
+)
+def detect_circular_dependencies(
+    filepath: str,
+    sample_limit: int = 25,
+) -> str:
+    """Detect circular workbook formula dependencies, including self-references."""
+    return _run_tool(
+        "detect_circular_dependencies",
+        lambda: detect_circular_dependencies_impl(
+            get_excel_path(filepath),
+            sample_limit=sample_limit,
         ),
     )
 

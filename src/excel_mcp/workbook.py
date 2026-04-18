@@ -1055,6 +1055,154 @@ def _extract_reference_matches_from_formula_text(
     return matched_references
 
 
+def _formula_token_values(formula_text: Any) -> list[str]:
+    if formula_text is None:
+        return []
+
+    normalized_formula = str(formula_text).strip()
+    if not normalized_formula:
+        return []
+    if not normalized_formula.startswith("="):
+        normalized_formula = f"={normalized_formula}"
+
+    tokenizer = Tokenizer(normalized_formula)
+    token_values: list[str] = []
+    for token in tokenizer.items:
+        if token.type != "OPERAND" or token.subtype != "RANGE":
+            continue
+        token_value = str(token.value).strip()
+        if token_value:
+            token_values.append(token_value)
+    return token_values
+
+
+def _iter_formula_cells(wb: Any) -> list[dict[str, Any]]:
+    formula_entries: list[dict[str, Any]] = []
+    for formula_sheet_name in wb.sheetnames:
+        formula_ws = wb[formula_sheet_name]
+        if _sheet_type(formula_ws) == "chartsheet":
+            continue
+
+        for row in formula_ws.iter_rows():
+            for cell in row:
+                if not isinstance(cell.value, str) or not cell.value.startswith("="):
+                    continue
+                try:
+                    token_values = _formula_token_values(cell.value)
+                except Exception:
+                    token_values = []
+                formula_entries.append(
+                    {
+                        "sheet_name": formula_sheet_name,
+                        "cell": cell.coordinate,
+                        "row": cell.row,
+                        "column": cell.column,
+                        "formula": cell.value,
+                        "token_values": token_values,
+                    }
+                )
+    return formula_entries
+
+
+def _formula_dependency_graph(
+    wb: Any,
+    formula_entries: list[dict[str, Any]],
+) -> dict[tuple[str, str], set[tuple[str, str]]]:
+    graph: dict[tuple[str, str], set[tuple[str, str]]] = {
+        (entry["sheet_name"], entry["cell"]): set() for entry in formula_entries
+    }
+
+    for entry in formula_entries:
+        entry_key = (entry["sheet_name"], entry["cell"])
+        for token_value in entry["token_values"]:
+            resolved_targets = _resolve_formula_reference_targets(
+                wb,
+                token_value=token_value,
+                formula_sheet_name=entry["sheet_name"],
+                formula_row=entry["row"],
+            )
+            for target in resolved_targets:
+                target_sheet_name = target.get("sheet_name")
+                target_range = target.get("range")
+                if (
+                    not target_sheet_name
+                    or not target_range
+                    or target_sheet_name not in wb.sheetnames
+                ):
+                    continue
+
+                target_ws = wb[target_sheet_name]
+                if _sheet_type(target_ws) == "chartsheet":
+                    continue
+
+                try:
+                    target_bounds, _ = _parse_range_reference(
+                        target_range,
+                        worksheet=target_ws,
+                        expected_sheet=target_sheet_name,
+                        error_cls=WorkbookError,
+                    )
+                except WorkbookError:
+                    continue
+
+                for row in target_ws.iter_rows(
+                    min_row=target_bounds[0],
+                    max_row=target_bounds[2],
+                    min_col=target_bounds[1],
+                    max_col=target_bounds[3],
+                ):
+                    for precedent_cell in row:
+                        if not isinstance(precedent_cell.value, str) or not precedent_cell.value.startswith("="):
+                            continue
+                        graph[entry_key].add(
+                            (target_sheet_name, precedent_cell.coordinate)
+                        )
+
+    return graph
+
+
+def _tarjan_strongly_connected_components(
+    graph: dict[tuple[str, str], set[tuple[str, str]]]
+) -> list[list[tuple[str, str]]]:
+    index = 0
+    stack: list[tuple[str, str]] = []
+    on_stack: set[tuple[str, str]] = set()
+    indices: dict[tuple[str, str], int] = {}
+    lowlinks: dict[tuple[str, str], int] = {}
+    components: list[list[tuple[str, str]]] = []
+
+    def strongconnect(node: tuple[str, str]) -> None:
+        nonlocal index
+        indices[node] = index
+        lowlinks[node] = index
+        index += 1
+        stack.append(node)
+        on_stack.add(node)
+
+        for neighbor in graph.get(node, set()):
+            if neighbor not in indices:
+                strongconnect(neighbor)
+                lowlinks[node] = min(lowlinks[node], lowlinks[neighbor])
+            elif neighbor in on_stack:
+                lowlinks[node] = min(lowlinks[node], indices[neighbor])
+
+        if lowlinks[node] == indices[node]:
+            component: list[tuple[str, str]] = []
+            while stack:
+                current = stack.pop()
+                on_stack.remove(current)
+                component.append(current)
+                if current == node:
+                    break
+            components.append(component)
+
+    for node in graph:
+        if node not in indices:
+            strongconnect(node)
+
+    return components
+
+
 def _extract_validation_overlaps(
     ws: Worksheet,
     *,
@@ -4706,4 +4854,88 @@ def explain_formula_cell(
         raise
     except Exception as e:
         logger.error(f"Failed to explain formula cell: {e}")
+        raise WorkbookError(str(e))
+
+
+def detect_circular_dependencies(
+    filepath: str,
+    sample_limit: int = 25,
+) -> dict[str, Any]:
+    """Detect circular workbook formula dependencies, including self-references."""
+    try:
+        if not isinstance(sample_limit, int) or isinstance(sample_limit, bool) or sample_limit <= 0:
+            raise WorkbookError("sample_limit must be a positive integer")
+
+        with safe_workbook(filepath) as wb:
+            formula_entries = _iter_formula_cells(wb)
+            formula_lookup = {
+                (entry["sheet_name"], entry["cell"]): entry
+                for entry in formula_entries
+            }
+            graph = _formula_dependency_graph(wb, formula_entries)
+            components = _tarjan_strongly_connected_components(graph)
+
+            cycles: list[dict[str, Any]] = []
+            for component in components:
+                sorted_component = sorted(component)
+                includes_self_reference = (
+                    len(sorted_component) == 1
+                    and sorted_component[0] in graph.get(sorted_component[0], set())
+                )
+                if len(sorted_component) <= 1 and not includes_self_reference:
+                    continue
+
+                cells = [
+                    {
+                        "sheet_name": sheet_name,
+                        "cell": cell,
+                        "formula": formula_lookup[(sheet_name, cell)]["formula"],
+                    }
+                    for sheet_name, cell in sorted_component
+                ]
+                cycles.append(
+                    {
+                        "size": len(sorted_component),
+                        "includes_self_reference": includes_self_reference,
+                        "cell_refs": [f"{sheet_name}!{cell}" for sheet_name, cell in sorted_component],
+                        "sheets": sorted({sheet_name for sheet_name, _ in sorted_component}),
+                        "cells": cells,
+                    }
+                )
+
+        cycle_count = len(cycles)
+        self_referential_count = sum(1 for cycle in cycles if cycle["includes_self_reference"])
+        multi_cell_count = cycle_count - self_referential_count
+        dependency_edge_count = sum(len(neighbors) for neighbors in graph.values())
+
+        result = {
+            "summary": {
+                "formula_cell_count": len(formula_entries),
+                "dependency_edge_count": dependency_edge_count,
+                "cycle_count": cycle_count,
+                "self_referential_cycle_count": self_referential_count,
+                "multi_cell_cycle_count": multi_cell_count,
+                "has_circular_dependencies": cycle_count > 0,
+            },
+            "cycles": {
+                "count": cycle_count,
+                "sample": cycles[:sample_limit],
+            },
+        }
+        if cycle_count == 0:
+            result["hints"] = ["No circular formula dependencies detected."]
+        else:
+            result["hints"] = [
+                "Review circular formula groups before relying on workbook calculations or downstream automation."
+            ]
+            if cycle_count > sample_limit:
+                result["warnings"] = [
+                    f"Sampled {sample_limit} of {cycle_count} circular dependency groups."
+                ]
+
+        return result
+    except WorkbookError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to detect circular dependencies: {e}")
         raise WorkbookError(str(e))
