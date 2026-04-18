@@ -4,7 +4,7 @@ import re
 from typing import Any, Dict, Optional
 
 from openpyxl.worksheet.worksheet import Worksheet
-from openpyxl.utils import get_column_letter, column_index_from_string
+from openpyxl.utils import get_column_letter, column_index_from_string, range_boundaries
 from openpyxl.styles import Font, Border, PatternFill, Side
 
 from .cell_utils import parse_cell_range, validate_cell_reference
@@ -210,6 +210,65 @@ def _sheet_protection_state(worksheet: Worksheet) -> Dict[str, Any]:
         "password_protected": bool(worksheet.protection.password),
         "options": _serialize_protection_options(worksheet),
     }
+
+
+def _table_row_operation_impacts(
+    worksheet: Worksheet,
+    *,
+    start_row: int,
+) -> list[dict[str, Any]]:
+    impacts: list[dict[str, Any]] = []
+    for table in getattr(worksheet, "tables", {}).values():
+        _, min_row, _, max_row = range_boundaries(table.ref)
+        if start_row > max_row:
+            continue
+        impacts.append(
+            {
+                "table_name": table.displayName,
+                "range": table.ref,
+                "position": "before" if start_row < min_row else "inside",
+            }
+        )
+    return impacts
+
+
+def _table_column_operation_impacts(
+    worksheet: Worksheet,
+    *,
+    start_col: int,
+) -> list[dict[str, Any]]:
+    impacts: list[dict[str, Any]] = []
+    for table in getattr(worksheet, "tables", {}).values():
+        min_col, _, max_col, _ = range_boundaries(table.ref)
+        if start_col > max_col:
+            continue
+        impacts.append(
+            {
+                "table_name": table.displayName,
+                "range": table.ref,
+                "position": "before" if start_col < min_col else "inside",
+            }
+        )
+    return impacts
+
+
+def _raise_table_structure_guard(
+    *,
+    operation: str,
+    impacts: list[dict[str, Any]],
+) -> None:
+    if not impacts:
+        return
+
+    impacted_tables = ", ".join(
+        f"{impact['table_name']} ({impact['range']})"
+        for impact in impacts
+    )
+    raise SheetError(
+        f"Cannot {operation} because it would shift native Excel table(s) without a safe "
+        f"table-aware update: {impacted_tables}. Use table-specific tools or choose a "
+        "position after the affected tables."
+    )
 
 
 def get_sheet_protection(filepath: str, sheet_name: str) -> Dict[str, Any]:
@@ -1154,8 +1213,16 @@ def delete_range_operation(
 
             # Shift cells if needed
             if shift_direction == "up":
+                _raise_table_structure_guard(
+                    operation=f"delete range {range_string} with upward shift",
+                    impacts=_table_row_operation_impacts(worksheet, start_row=start_row),
+                )
                 worksheet.delete_rows(start_row, (end_row or start_row) - start_row + 1)
             elif shift_direction == "left":
+                _raise_table_structure_guard(
+                    operation=f"delete range {range_string} with left shift",
+                    impacts=_table_column_operation_impacts(worksheet, start_col=start_col),
+                )
                 worksheet.delete_cols(start_col, (end_col or start_col) - start_col + 1)
 
         return {
@@ -1195,6 +1262,10 @@ def insert_row(
             if count < 1:
                 raise ValidationError("Count must be 1 or greater")
 
+            _raise_table_structure_guard(
+                operation=f"insert rows starting at row {start_row}",
+                impacts=_table_row_operation_impacts(worksheet, start_row=start_row),
+            )
             worksheet.insert_rows(start_row, count)
 
         return {
@@ -1240,6 +1311,10 @@ def insert_cols(
             if count < 1:
                 raise ValidationError("Count must be 1 or greater")
 
+            _raise_table_structure_guard(
+                operation=f"insert columns starting at column {start_col}",
+                impacts=_table_column_operation_impacts(worksheet, start_col=start_col),
+            )
             worksheet.insert_cols(start_col, count)
 
         return {
@@ -1287,6 +1362,10 @@ def delete_rows(
             if start_row > worksheet.max_row:
                 raise ValidationError(f"Start row {start_row} exceeds worksheet bounds (max row: {worksheet.max_row})")
 
+            _raise_table_structure_guard(
+                operation=f"delete rows starting at row {start_row}",
+                impacts=_table_row_operation_impacts(worksheet, start_row=start_row),
+            )
             worksheet.delete_rows(start_row, count)
 
         return {
@@ -1334,6 +1413,10 @@ def delete_cols(
             if start_col > worksheet.max_column:
                 raise ValidationError(f"Start column {start_col} exceeds worksheet bounds (max column: {worksheet.max_column})")
 
+            _raise_table_structure_guard(
+                operation=f"delete columns starting at column {start_col}",
+                impacts=_table_column_operation_impacts(worksheet, start_col=start_col),
+            )
             worksheet.delete_cols(start_col, count)
 
         return {

@@ -792,6 +792,24 @@ def test_analyze_range_impact_reports_low_risk_for_empty_area(tmp_workbook):
     assert result["hints"] == ["No overlapping workbook structures detected for this range."]
 
 
+def test_analyze_range_impact_accepts_quoted_sheet_name_with_apostrophe(tmp_path):
+    filepath = str(tmp_path / "apostrophe-impact.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Bob's Data"
+    ws["A1"] = "Label"
+    ws["B1"] = "Value"
+    ws["A2"] = "North"
+    ws["B2"] = 10
+    wb.save(filepath)
+    wb.close()
+
+    result = analyze_range_impact(filepath, "Bob's Data", "'Bob''s Data'!A1:B2")
+
+    assert result["sheet_name"] == "Bob's Data"
+    assert result["range"] == "A1:B2"
+
+
 def test_analyze_range_impact_tracks_local_named_range_dependencies(tmp_workbook):
     workbook = load_workbook(tmp_workbook)
     ws = workbook["Sheet1"]

@@ -21,7 +21,7 @@ from openpyxl.utils.cell import range_boundaries
 
 from .cell_utils import parse_cell_range
 from .exceptions import ValidationError, ChartError
-from .workbook import require_worksheet, safe_workbook
+from .workbook import _normalize_sheet_reference_name, require_worksheet, safe_workbook
 
 logger = logging.getLogger(__name__)
 DEFAULT_CHART_WIDTH = 15.0
@@ -963,7 +963,7 @@ def _resolve_range_source(
 
     if "!" in range_ref:
         range_sheet_name, cell_range = range_ref.rsplit("!", 1)
-        range_sheet_name = range_sheet_name.strip("'")
+        range_sheet_name = _normalize_sheet_reference_name(range_sheet_name)
         source_worksheet = require_worksheet(
             workbook,
             range_sheet_name,
@@ -984,6 +984,32 @@ def _resolve_range_source(
         raise ValidationError(f"Invalid data range format: {str(e)}") from e
 
     return source_worksheet, start_row, start_col, end_row, end_col
+
+
+def _validate_contiguous_chart_source(
+    *,
+    chart_type: str,
+    start_row: int,
+    start_col: int,
+    end_row: int,
+    end_col: int,
+) -> None:
+    data_row_count = end_row - start_row
+    value_column_count = end_col - start_col
+
+    if data_row_count < 1:
+        raise ValidationError(
+            "data_range must include a header row and at least one data row"
+        )
+
+    if value_column_count < 1:
+        if chart_type == "scatter":
+            raise ValidationError(
+                "Scatter chart data_range must include an X column and at least one Y series column"
+            )
+        raise ValidationError(
+            "data_range must include a category column and at least one value column"
+        )
 
 
 def _reference_from_range(
@@ -1114,6 +1140,13 @@ def create_chart_in_sheet(
                 data_range,
             )
             chart_type_lower, _ = _resolve_chart_class(chart_type)
+            _validate_contiguous_chart_source(
+                chart_type=chart_type_lower,
+                start_row=start_row,
+                start_col=start_col,
+                end_row=end_row,
+                end_col=end_col,
+            )
             chart = _build_chart(chart_type_lower, title=title, x_axis=x_axis, y_axis=y_axis)
             resolved_target_cell, placement_details = _resolve_chart_anchor(
                 wb,

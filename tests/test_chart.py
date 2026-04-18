@@ -662,6 +662,49 @@ def test_chart_cross_sheet_reference_invalid(chart_workbook):
         create_chart_in_sheet(chart_workbook, "Sales", "Missing!A1:B5", "bar", "E1")
 
 
+def test_chart_accepts_quoted_sheet_name_with_apostrophe(tmp_path):
+    from openpyxl import Workbook
+
+    filepath = str(tmp_path / "quoted-sheet-chart.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Bob's Data"
+    ws.append(["Label", "Value"])
+    ws.append(["A", 10])
+    ws.append(["B", 20])
+    wb.save(filepath)
+    wb.close()
+
+    result = create_chart_in_sheet(
+        filepath,
+        "Bob's Data",
+        "'Bob''s Data'!A1:B3",
+        "bar",
+        "D1",
+    )
+
+    assert result["details"]["location"] == "D1"
+
+
+@pytest.mark.parametrize(
+    ("chart_type", "data_range", "message"),
+    [
+        ("bar", "A1:A5", "category column and at least one value column"),
+        ("scatter", "A1:A5", "X column and at least one Y series column"),
+        ("bar", "A1:B1", "header row and at least one data row"),
+        ("scatter", "A1:B1", "header row and at least one data row"),
+    ],
+)
+def test_chart_rejects_contiguous_ranges_that_cannot_form_a_series(
+    chart_workbook,
+    chart_type,
+    data_range,
+    message,
+):
+    with pytest.raises(ValidationError, match=message):
+        create_chart_in_sheet(chart_workbook, "Sales", data_range, chart_type, "E1")
+
+
 def test_create_chart_from_series_rejects_missing_scatter_axis(chart_workbook):
     with pytest.raises(ValidationError, match="requires both x_range and y_range"):
         create_chart_from_series(

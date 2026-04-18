@@ -6,6 +6,7 @@ from excel_mcp.pivot import (
     _aggregate_values,
     _filter_data,
     _get_combinations,
+    _get_present_combinations,
 )
 from excel_mcp.exceptions import ValidationError, PivotError
 
@@ -78,6 +79,34 @@ def test_pivot_multiple_row_fields(pivot_workbook):
     pivot_ws = wb["Data_pivot"]
     assert pivot_ws["A1"].value == "Region"
     assert pivot_ws["B1"].value == "Product"
+    wb.close()
+
+
+def test_pivot_only_emits_observed_row_combinations(tmp_path):
+    from openpyxl import Workbook
+
+    filepath = str(tmp_path / "pivot-sparse.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    for row in [
+        ("Region", "Product", "Sales"),
+        ("North", "Widget", 10),
+        ("South", "Gadget", 20),
+    ]:
+        ws.append(row)
+    wb.save(filepath)
+    wb.close()
+
+    create_pivot_table(filepath, "Data", "A1:C3", rows=["Region", "Product"], values=["Sales"])
+
+    wb = load_workbook(filepath)
+    pivot_ws = wb["Data_pivot"]
+    rows = [row for row in pivot_ws.iter_rows(min_row=2, max_col=3, values_only=True) if row[0] is not None]
+    assert rows == [
+        ("North", "Widget", 10),
+        ("South", "Gadget", 20),
+    ]
     wb.close()
 
 
@@ -227,3 +256,19 @@ def test_get_combinations():
     combos = _get_combinations(field_values)
     assert len(combos) == 4
     assert {"a": "x", "b": "1"} in combos
+
+
+def test_get_present_combinations_only_uses_observed_records():
+    combos = _get_present_combinations(
+        [
+            {"region": "North", "product": "Widget"},
+            {"region": "South", "product": "Gadget"},
+            {"region": "North", "product": "Widget"},
+        ],
+        ["region", "product"],
+    )
+
+    assert combos == [
+        {"region": "North", "product": "Widget"},
+        {"region": "South", "product": "Gadget"},
+    ]

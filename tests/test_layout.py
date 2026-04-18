@@ -18,8 +18,12 @@ from excel_mcp.server import set_worksheet_visibility as set_worksheet_visibilit
 from excel_mcp.server import set_autofilter as set_autofilter_tool
 from excel_mcp.server import unmerge_cells as unmerge_cells_tool
 from excel_mcp.sheet import (
+    delete_cols,
+    delete_rows,
     autofit_columns,
     get_sheet_protection,
+    insert_cols,
+    insert_row,
     merge_range,
     set_auto_filter,
     set_column_widths,
@@ -31,6 +35,7 @@ from excel_mcp.sheet import (
     set_sheet_visibility,
     unmerge_range,
 )
+from excel_mcp.tables import create_excel_table
 from excel_mcp.workbook import list_named_ranges
 
 
@@ -56,6 +61,23 @@ def named_range_workbook(tmp_path):
     wb.save(filepath)
     wb.close()
     return str(filepath)
+
+
+@pytest.fixture
+def table_guard_workbook(tmp_path):
+    filepath = str(tmp_path / "table-guard.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws.append(["Name", "Value"])
+    ws.append(["A", 1])
+    ws.append(["B", 2])
+    ws.append(["outside", "kept"])
+    wb.save(filepath)
+    wb.close()
+
+    create_excel_table(filepath, "Data", "A1:B3", table_name="DataTable")
+    return filepath
 
 
 def test_set_freeze_panes_persists_value(tmp_workbook):
@@ -228,6 +250,36 @@ def test_set_print_titles_can_clear_rows_or_columns(tmp_workbook):
     ws = wb["Sheet1"]
     assert ws.print_title_rows is None
     assert ws.print_title_cols == "$A:$B"
+    wb.close()
+
+
+@pytest.mark.parametrize(
+    ("operation", "args"),
+    [
+        (insert_row, ("Data", 2)),
+        (delete_rows, ("Data", 2)),
+        (insert_cols, ("Data", 2)),
+        (delete_cols, ("Data", 2)),
+    ],
+)
+def test_structural_row_and_column_operations_reject_native_table_impacts(
+    table_guard_workbook,
+    operation,
+    args,
+):
+    with pytest.raises(Exception, match="native Excel table"):
+        operation(table_guard_workbook, *args)
+
+
+def test_insert_row_below_native_table_still_succeeds(table_guard_workbook):
+    result = insert_row(table_guard_workbook, "Data", 5)
+
+    assert result["start_row"] == 5
+
+    wb = load_workbook(table_guard_workbook)
+    ws = wb["Data"]
+    assert ws.tables["DataTable"].ref == "A1:B3"
+    assert ws["A4"].value == "outside"
     wb.close()
 
 

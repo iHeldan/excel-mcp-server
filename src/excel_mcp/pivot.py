@@ -70,6 +70,28 @@ def _format_column_header(
         return f"{column_label} | {value_label}"
     return column_label
 
+
+def _get_present_combinations(
+    data: list[dict[str, Any]],
+    fields: list[str],
+) -> list[dict[str, Any]]:
+    if not fields:
+        return [{}]
+
+    seen: set[tuple[Any, ...]] = set()
+    combinations: list[dict[str, Any]] = []
+    for record in data:
+        key = tuple(record.get(field) for field in fields)
+        if key in seen:
+            continue
+        seen.add(key)
+        combinations.append({field: record.get(field) for field in fields})
+
+    return sorted(
+        combinations,
+        key=lambda combo: tuple((combo[field] is None, str(combo[field])) for field in fields),
+    )
+
 def create_pivot_table(
     filepath: str,
     sheet_name: str,
@@ -164,15 +186,9 @@ def create_pivot_table(
                 cell.font = Font(bold=True)
                 current_col += 1
 
-            # Resolve row and column combinations before writing value headers
-            row_field_values = {field: {record.get(field) for record in data} for field in resolved_rows}
-            row_combinations = _get_combinations(row_field_values)
-
-            column_field_values = {field: {record.get(field) for record in data} for field in resolved_columns}
-            column_combinations = _get_combinations(column_field_values)
-
-            if not column_combinations:
-                column_combinations = [{}]
+            # Only emit row/column combinations that actually exist in the source data.
+            row_combinations = _get_present_combinations(data, resolved_rows)
+            column_combinations = _get_present_combinations(data, resolved_columns)
 
             include_value_field = len(resolved_values) > 1 or len(resolved_columns) > 1
 
@@ -194,12 +210,6 @@ def create_pivot_table(
 
             # Recalculate after header writing
             current_row = 2
-
-            # Get unique values for each row field
-            field_values = row_field_values
-
-            # Generate all combinations of row field values
-            row_combinations = _get_combinations(field_values)
 
             # Calculate table dimensions for formatting
             total_rows = len(row_combinations) + 1  # +1 for header

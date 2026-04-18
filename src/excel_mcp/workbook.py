@@ -56,6 +56,13 @@ def _bounds_to_range(min_row: int, min_col: int, max_row: int, max_col: int) -> 
     return f"{get_column_letter(min_col)}{min_row}:{get_column_letter(max_col)}{max_row}"
 
 
+def _normalize_sheet_reference_name(raw_sheet_name: Any) -> str:
+    cleaned = str(raw_sheet_name).strip()
+    if len(cleaned) >= 2 and cleaned[0] == "'" and cleaned[-1] == "'":
+        cleaned = cleaned[1:-1]
+    return cleaned.replace("''", "'")
+
+
 def _bounds_intersect(
     first: tuple[int, int, int, int],
     second: tuple[int, int, int, int],
@@ -95,7 +102,7 @@ def _parse_range_reference(
 
     if "!" in cleaned:
         range_sheet, cleaned = cleaned.rsplit("!", 1)
-        normalized_sheet = range_sheet.strip().strip("'")
+        normalized_sheet = _normalize_sheet_reference_name(range_sheet)
         if expected_sheet is not None and normalized_sheet != expected_sheet:
             raise error_cls(
                 f"Range '{range_ref}' refers to sheet '{normalized_sheet}', expected '{expected_sheet}'"
@@ -141,7 +148,7 @@ def _iter_range_references(
 
         if "!" in cleaned:
             range_sheet, local_range = cleaned.rsplit("!", 1)
-            normalized_sheet = range_sheet.strip().strip("'")
+            normalized_sheet = _normalize_sheet_reference_name(range_sheet)
             if expected_sheet is not None and normalized_sheet != expected_sheet:
                 continue
         else:
@@ -574,7 +581,7 @@ def _resolve_formula_reference_targets(
     reference_scope_sheet = None
     if "!" in token_value:
         range_sheet, local_reference = token_value.rsplit("!", 1)
-        reference_scope_sheet = range_sheet.strip().strip("'")
+        reference_scope_sheet = _normalize_sheet_reference_name(range_sheet)
 
     table_targets = _resolve_table_structured_reference_targets(
         wb,
@@ -713,7 +720,7 @@ def _resolve_formula_token_references(
     local_reference = token_value
     if "!" in token_value:
         range_sheet, local_reference = token_value.rsplit("!", 1)
-        reference_scope_sheet = range_sheet.strip().strip("'")
+        reference_scope_sheet = _normalize_sheet_reference_name(range_sheet)
 
     table_matches = _resolve_table_structured_reference(
         wb,
@@ -798,7 +805,7 @@ def _formula_text_has_broken_reference(
         reference_scope_sheet = None
         if "!" in token_value:
             range_sheet, local_reference = token_value.rsplit("!", 1)
-            reference_scope_sheet = range_sheet.strip().strip("'")
+            reference_scope_sheet = _normalize_sheet_reference_name(range_sheet)
             if reference_scope_sheet and reference_scope_sheet not in wb.sheetnames:
                 return True
 
