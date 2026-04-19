@@ -161,6 +161,27 @@ def test_aggregate_table_rejects_metric_alias_collision_with_group_name(complex_
         )
 
 
+def test_aggregate_table_accepts_metric_agg_and_column_aliases(complex_workbook):
+    result = aggregate_table_impl(
+        complex_workbook,
+        table_name="SalesData",
+        group_by=["Region"],
+        metrics=[{"agg": "sum", "column": "Sales", "as": "total_sales"}],
+        sort_by="total_sales",
+        sort_desc=True,
+    )
+
+    assert result["rows"] == [
+        ["East", 30],
+        ["North", 28],
+        ["South", 24],
+        ["West", 18],
+    ]
+    assert result["metrics"] == [
+        {"op": "sum", "field": "Sales", "as": "total_sales"},
+    ]
+
+
 def test_aggregate_table_rejects_boolean_limit(complex_workbook):
     with pytest.raises(DataError, match="limit must be a positive integer"):
         aggregate_table_impl(complex_workbook, table_name="SalesData", limit=True)
@@ -264,6 +285,39 @@ def test_bulk_aggregate_workbooks_combines_matching_workbooks(tmp_path):
             "matched_rows": 2,
             "auto_selected_sheet": False,
         },
+    ]
+
+
+def test_bulk_aggregate_workbooks_accepts_metric_agg_and_column_aliases(tmp_path):
+    january = _create_query_workbook(
+        tmp_path,
+        "january.xlsx",
+        ["Region", "Sales"],
+        [("North", 10), ("South", 5)],
+    )
+    february = _create_query_workbook(
+        tmp_path,
+        "february.xlsx",
+        ["Region", "Sales"],
+        [("North", 7), ("East", 3)],
+    )
+
+    result = bulk_aggregate_workbooks_impl(
+        [january, february],
+        sheet_name="Sheet1",
+        group_by=["region"],
+        metrics=[{"agg": "sum", "column": "sales", "as": "total_sales"}],
+        sort_by="total_sales",
+        sort_desc=True,
+    )
+
+    assert result["rows"] == [
+        ["North", 17],
+        ["South", 5],
+        ["East", 3],
+    ]
+    assert result["metrics"] == [
+        {"op": "sum", "field": "Sales", "as": "total_sales"},
     ]
 
 

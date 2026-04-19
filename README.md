@@ -184,6 +184,7 @@ For the compact table readers (`quick_read`, `read_excel_as_table`, `read_excel_
 - `query_table` is the lightest way to pull just the matching rows and columns you need from a worksheet dataset or native Excel table
 - `aggregate_table` lets agents compute grouped summaries directly in SheetForge instead of over-reading the full dataset into context first
 - `bulk_aggregate_workbooks` extends that pattern across many workbook files when a recurring reporting workflow would otherwise need ad hoc Python or repeated per-file tool calls
+- aggregate metrics accept both the canonical `{"op": "sum", "field": "Sales", "as": "total_sales"}` shape and the more guessable alias form `{"agg": "sum", "column": "Sales", "as": "total_sales"}`
 - `bulk_filter_workbooks` does the same for row-level inspection, while keeping workbook provenance visible by default
 - `union_tables` is the fastest way to normalize many comparable workbook datasets into one combined tabular payload before downstream QA, export, or further aggregation
 - `cross_workbook_lookup` is the fastest way to enrich one workbook from another without writing an ad hoc merge script, especially for master-data lookups, status enrichment, and cross-file QA workflows
@@ -191,6 +192,15 @@ For the compact table readers (`quick_read`, `read_excel_as_table`, `read_excel_
 - `plan_workbook_repairs` is the fastest way to turn those audit findings into an actual action queue instead of manually deciding the next tool call for every problem
 - `apply_workbook_repairs` lets agents preview or apply the safe subset of those repairs without having to orchestrate each broken workbook artifact manually
 - `diff_workbooks` is the quickest before/after QA pass when an agent has touched workbook structure and wants proof of what actually changed
+
+## Recommended Agent Workflows
+
+1. Unfamiliar workbook -> safe mutation -> verification
+   Start with `list_all_sheets` or `profile_workbook`, inspect layout-heavy tabs with `describe_sheet_layout`, run `analyze_range_impact` before overwriting an important range, then confirm the before/after result with `diff_workbooks`.
+2. Workbook repair loop
+   Use `audit_workbook` to find high-signal issues, `plan_workbook_repairs` to turn them into an action queue, `apply_workbook_repairs(..., dry_run=True)` to preview the safe subset, then rerun `audit_workbook` after applying repairs to confirm the workbook is back to a low-risk state.
+3. Multi-workbook reporting
+   Use `bulk_aggregate_workbooks`, `bulk_filter_workbooks`, `union_tables`, or `cross_workbook_lookup` to build the reporting dataset first, then write the summarized rows into a fresh workbook tab and finish the presentation layer with `format_ranges`, `find_free_canvas`, `create_chart`, and `autofit_columns`.
 
 See [TOOLS.md](TOOLS.md) for the full reference.
 Release notes live in [CHANGELOG.md](CHANGELOG.md).

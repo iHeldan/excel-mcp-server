@@ -194,10 +194,10 @@ def _collect_aggregate_input_refs(
         for metric in metrics:
             if not isinstance(metric, dict):
                 continue
-            operator = str(metric.get("op", "")).strip().lower()
+            operator = str(metric.get("op", metric.get("agg", ""))).strip().lower()
             if operator == "count":
                 continue
-            add_ref(metric.get("field"))
+            add_ref(metric.get("field", metric.get("column")))
 
     return refs
 
@@ -752,11 +752,15 @@ def _normalize_metrics(
         if not isinstance(metric, dict):
             raise DataError(f"metrics[{index}] must be an object")
 
-        operator = str(metric.get("op", "")).strip().lower()
+        operator = str(metric.get("op", metric.get("agg", ""))).strip().lower()
+        if not operator:
+            raise DataError(
+                f"metrics[{index}] must include an 'op' (or 'agg') value such as 'sum' or 'count'"
+            )
         if operator not in AGGREGATE_OPERATORS:
             raise DataError(f"metrics[{index}] uses unsupported operator '{operator}'")
 
-        field_ref = metric.get("field")
+        field_ref = metric.get("field", metric.get("column"))
         column_index = None
         header_name = None
         if operator != "count":
