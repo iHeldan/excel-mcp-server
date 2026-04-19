@@ -31,6 +31,7 @@
 
 ### Fixed
 
+- Fixed inferred read schemas so formula-backed columns are now labeled as `formula` instead of misleadingly appearing as plain `string` columns when SheetForge returns formula text from workbook reads.
 - Fixed `rename_worksheet` so chart series references now follow the renamed sheet instead of keeping stale source formulas that still point at the old worksheet name.
 - Fixed `copy_range` so copied formulas now translate their relative references to the target cells instead of being pasted back as unchanged formula text.
 - Fixed range-read continuation cursors so follow-up pages now preserve the original payload mode, including `values_only=True` and compact cell-metadata reads, instead of silently falling back to the default cell-metadata shape.

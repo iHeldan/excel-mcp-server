@@ -231,7 +231,7 @@ Returns matches under `data.matches`:
 - `row_mode`
   Use `row_mode="arrays"` for the current `headers + rows` shape, or `row_mode="objects"` to receive `records` keyed by normalized field names such as `first_name`, `column_2`, or ASCII-safe transliterations like `nayttokerrat`.
 - `infer_schema`
-  When `infer_schema=True`, the response includes `schema` entries with `field`, `header`, `type`, and `nullable` hints inferred from the returned rows.
+  When `infer_schema=True`, the response includes `schema` entries with `field`, `header`, `type`, and `nullable` hints inferred from the returned rows. Formula cells are surfaced as formula text rather than recalculated values, and formula-backed columns are therefore typed as `formula` instead of pretending to be ordinary strings or numbers.
 - `search_in_sheet(filepath: str, sheet_name: str, query: Any, exact: bool = True, max_results: int = 50) -> str`
   Returns exact or partial value matches across the worksheet.
 - `append_table_rows(filepath: str, sheet_name: str, rows: List[Dict[str, Any]], header_row: int = 1, dry_run: bool = False, include_changes: Optional[bool] = None) -> str`

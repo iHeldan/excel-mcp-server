@@ -371,6 +371,29 @@ def test_read_excel_table_can_return_records_and_schema(tmp_workbook):
     assert "rows" not in result
 
 
+def test_read_excel_table_marks_formula_columns_as_formula_schema(tmp_path):
+    filepath = str(tmp_path / "formula-table.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["Item", "Qty", "Price", "Total"])
+    ws.append(["A", 2, 5, "=B2*C2"])
+    ws.append(["B", 3, 7, "=B3*C3"])
+    wb.save(filepath)
+    wb.close()
+
+    create_excel_table(filepath, "Sheet1", "A1:D3", table_name="SalesTable")
+    result = read_excel_table(filepath, "SalesTable", row_mode="objects", infer_schema=True)
+
+    assert result["records"][0]["total"] == "=B2*C2"
+    assert result["schema"][3] == {
+        "field": "total",
+        "header": "Total",
+        "type": "formula",
+        "nullable": False,
+    }
+
+
 def test_read_excel_table_can_filter_by_sheet(multi_sheet_workbook):
     create_excel_table(multi_sheet_workbook, "Sales", "A1:B2", table_name="SalesTable")
     create_excel_table(multi_sheet_workbook, "Inventory", "A1:B2", table_name="InventoryTable")

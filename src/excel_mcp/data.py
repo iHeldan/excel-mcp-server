@@ -106,6 +106,8 @@ def _infer_value_type(value: Any) -> str:
     if isinstance(value, time):
         return "time"
     if isinstance(value, str):
+        if value.startswith("="):
+            return "formula"
         return "string"
     return type(value).__name__.lower()
 
@@ -116,6 +118,8 @@ def _infer_column_type(values: List[Any]) -> str:
         return "unknown"
     if len(non_null_types) == 1:
         return next(iter(non_null_types))
+    if "formula" in non_null_types:
+        return "formula"
     if non_null_types <= {"integer", "number"}:
         return "number"
     if non_null_types <= {"date", "datetime"}:

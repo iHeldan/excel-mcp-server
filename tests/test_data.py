@@ -197,6 +197,28 @@ def test_read_as_table_can_return_records_and_schema(tmp_workbook):
     assert "rows" not in result
 
 
+def test_read_as_table_marks_formula_columns_as_formula_schema(tmp_path):
+    filepath = tmp_path / "formula-schema.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["Item", "Qty", "Price", "Total"])
+    ws.append(["A", 2, 5, "=B2*C2"])
+    ws.append(["B", 3, 7, "=B3*C3"])
+    wb.save(filepath)
+    wb.close()
+
+    result = read_as_table(str(filepath), "Sheet1", row_mode="objects", infer_schema=True)
+
+    assert result["records"][0]["total"] == "=B2*C2"
+    assert result["schema"][3] == {
+        "field": "total",
+        "header": "Total",
+        "type": "formula",
+        "nullable": False,
+    }
+
+
 def test_read_as_table_schema_normalizes_and_dedupes_headers(tmp_path):
     from openpyxl import Workbook
 
@@ -903,6 +925,28 @@ def test_quick_read_can_return_records_and_schema(multi_sheet_workbook):
     ]
     assert result["row_mode"] == "objects"
     assert "rows" not in result
+
+
+def test_quick_read_marks_formula_columns_as_formula_schema(tmp_path):
+    filepath = tmp_path / "quick-read-formula-schema.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["Item", "Qty", "Price", "Total"])
+    ws.append(["A", 2, 5, "=B2*C2"])
+    ws.append(["B", 3, 7, "=B3*C3"])
+    wb.save(filepath)
+    wb.close()
+
+    result = quick_read_impl(str(filepath), sheet_name="Sheet1", row_mode="objects", infer_schema=True)
+
+    assert result["records"][1]["total"] == "=B3*C3"
+    assert result["schema"][3] == {
+        "field": "total",
+        "header": "Total",
+        "type": "formula",
+        "nullable": False,
+    }
 
 
 def test_quick_read_tool_returns_json_envelope(multi_sheet_workbook):
