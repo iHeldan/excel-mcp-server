@@ -2,6 +2,7 @@ import json
 
 import pytest
 from openpyxl import Workbook, load_workbook
+from openpyxl.chart import BarChart, Reference
 from openpyxl.workbook.defined_name import DefinedName
 
 from excel_mcp.server import freeze_panes as freeze_panes_tool
@@ -287,6 +288,59 @@ def test_set_worksheet_visibility_dry_run_does_not_persist(multi_sheet_workbook)
 def test_set_worksheet_visibility_rejects_hiding_only_visible_sheet(tmp_workbook):
     with pytest.raises(Exception, match="only visible sheet"):
         set_sheet_visibility(tmp_workbook, "Sheet1", "hidden")
+
+
+def test_set_worksheet_visibility_counts_visible_chartsheets_when_hiding_worksheet(tmp_path):
+    filepath = str(tmp_path / "visibility-with-chartsheet.xlsx")
+    wb = Workbook()
+    data = wb.active
+    data.title = "Data"
+    data.append(["Name", "Value"])
+    data.append(["Alice", 10])
+    data.append(["Bob", 12])
+
+    chart = BarChart()
+    values = Reference(data, min_col=2, min_row=1, max_row=3)
+    categories = Reference(data, min_col=1, min_row=2, max_row=3)
+    chart.add_data(values, titles_from_data=True)
+    chart.set_categories(categories)
+
+    charts = wb.create_chartsheet("Charts")
+    charts.add_chart(chart)
+    wb.save(filepath)
+    wb.close()
+
+    result = set_sheet_visibility(filepath, "Data", "hidden")
+    assert result["visibility"] == "hidden"
+
+    wb = load_workbook(filepath)
+    assert wb["Data"].sheet_state == "hidden"
+    assert wb["Charts"].sheet_state == "visible"
+    wb.close()
+
+
+def test_set_worksheet_visibility_rejects_hiding_only_visible_chartsheet(tmp_path):
+    filepath = str(tmp_path / "visibility-only-chartsheet.xlsx")
+    wb = Workbook()
+    data = wb.active
+    data.title = "Data"
+    data.append(["Name", "Value"])
+    data.append(["Alice", 10])
+    data.sheet_state = "hidden"
+
+    chart = BarChart()
+    values = Reference(data, min_col=2, min_row=1, max_row=2)
+    categories = Reference(data, min_col=1, min_row=2, max_row=2)
+    chart.add_data(values, titles_from_data=True)
+    chart.set_categories(categories)
+
+    charts = wb.create_chartsheet("Charts")
+    charts.add_chart(chart)
+    wb.save(filepath)
+    wb.close()
+
+    with pytest.raises(Exception, match="only visible sheet"):
+        set_sheet_visibility(filepath, "Charts", "hidden")
 
 
 def test_get_worksheet_protection_reports_defaults(tmp_workbook):

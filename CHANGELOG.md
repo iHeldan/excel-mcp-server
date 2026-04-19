@@ -28,6 +28,10 @@
 
 - Expanded `explain_formula_cell` with a compact `formula_chain` summary so agents can see chain depth layers, sampled formula edges, leaf precedents, root-to-leaf path samples, and whether `max_depth` truncated a deeper upstream chain.
 
+### Fixed
+
+- Fixed worksheet visibility guards so visible chart sheets now count correctly when preventing a workbook from ending up with zero visible sheets.
+
 ## 0.5.0 - 2026-04-18
 
 This minor release expands SheetForge MCP from workbook CRUD into a stronger workbook-analysis and large-read workflow for AI agents and automation pipelines.

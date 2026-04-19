@@ -146,7 +146,11 @@ def set_sheet_visibility(
             worksheet = wb[sheet_name]
             previous_visibility = worksheet.sheet_state
 
-            visible_sheets = [ws.title for ws in wb.worksheets if ws.sheet_state == "visible"]
+            visible_sheets = [
+                current_sheet_name
+                for current_sheet_name in wb.sheetnames
+                if getattr(wb[current_sheet_name], "sheet_state", "visible") == "visible"
+            ]
             if (
                 visibility != "visible"
                 and previous_visibility == "visible"
