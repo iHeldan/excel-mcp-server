@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Added `create_named_range` so agents can create workbook-level or sheet-scoped named ranges with `dry_run` previews and same-scope `replace=True` support instead of dropping to ad hoc Python for a common workbook-structure task.
+
+### Changed
+
+- Changed `rename_worksheet` so it now updates formula cells in addition to chart references and named ranges, and it also renames the default sibling pivot sheet (`Data_pivot` -> `Revenue_pivot`) when that move is conflict-free.
+
 ## 0.7.0 - 2026-04-19
 
 ### Added

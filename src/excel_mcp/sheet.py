@@ -167,6 +167,103 @@ def _update_workbook_chart_sheet_references(
     return updated_count
 
 
+def _update_workbook_formula_sheet_references(
+    workbook: Any,
+    *,
+    old_sheet_name: str,
+    new_sheet_name: str,
+) -> int:
+    updated_count = 0
+
+    for worksheet in getattr(workbook, "worksheets", []):
+        for row in worksheet.iter_rows():
+            for cell in row:
+                if not isinstance(cell.value, str) or not cell.value.startswith("="):
+                    continue
+                updated_value = _rewrite_sheet_reference_formula(
+                    cell.value,
+                    old_sheet_name=old_sheet_name,
+                    new_sheet_name=new_sheet_name,
+                )
+                if updated_value == cell.value:
+                    continue
+                cell.value = updated_value
+                updated_count += 1
+
+        for validation in getattr(getattr(worksheet, "data_validations", None), "dataValidation", []):
+            for attr_name in ("formula1", "formula2"):
+                formula = getattr(validation, attr_name, None)
+                updated_formula = _rewrite_sheet_reference_formula(
+                    formula,
+                    old_sheet_name=old_sheet_name,
+                    new_sheet_name=new_sheet_name,
+                )
+                if updated_formula == formula:
+                    continue
+                setattr(validation, attr_name, updated_formula)
+                updated_count += 1
+
+        for format_rules in getattr(worksheet.conditional_formatting, "_cf_rules", {}).values():
+            for rule in format_rules:
+                formulas = list(getattr(rule, "formula", None) or [])
+                if not formulas:
+                    continue
+                updated_formulas: list[Any] = []
+                rule_updates = 0
+                for formula in formulas:
+                    updated_formula = _rewrite_sheet_reference_formula(
+                        formula,
+                        old_sheet_name=old_sheet_name,
+                        new_sheet_name=new_sheet_name,
+                    )
+                    updated_formulas.append(updated_formula)
+                    if updated_formula != formula:
+                        rule_updates += 1
+                if rule_updates == 0:
+                    continue
+                rule.formula = updated_formulas
+                updated_count += rule_updates
+
+    return updated_count
+
+
+def _rename_generated_pivot_sheet(
+    workbook: Any,
+    *,
+    old_sheet_name: str,
+    new_sheet_name: str,
+) -> dict[str, Any]:
+    old_pivot_name = f"{old_sheet_name}_pivot"
+    new_pivot_name = f"{new_sheet_name}_pivot"
+
+    if old_pivot_name not in workbook.sheetnames:
+        return {
+            "attempted": False,
+            "renamed": False,
+            "old_name": None,
+            "new_name": None,
+            "skipped_reason": None,
+        }
+
+    if new_pivot_name in workbook.sheetnames:
+        return {
+            "attempted": True,
+            "renamed": False,
+            "old_name": old_pivot_name,
+            "new_name": new_pivot_name,
+            "skipped_reason": "target_exists",
+        }
+
+    workbook[old_pivot_name].title = new_pivot_name
+    return {
+        "attempted": True,
+        "renamed": True,
+        "old_name": old_pivot_name,
+        "new_name": new_pivot_name,
+        "skipped_reason": None,
+    }
+
+
 def _copy_local_named_ranges(
     source_sheet: Worksheet,
     target_sheet: Worksheet,
@@ -254,10 +351,38 @@ def rename_sheet(filepath: str, old_name: str, new_name: str) -> Dict[str, Any]:
                 old_sheet_name=old_name,
                 new_sheet_name=new_name,
             )
+            updated_formula_reference_count = _update_workbook_formula_sheet_references(
+                wb,
+                old_sheet_name=old_name,
+                new_sheet_name=new_name,
+            )
+            pivot_sheet_rename = _rename_generated_pivot_sheet(
+                wb,
+                old_sheet_name=old_name,
+                new_sheet_name=new_name,
+            )
+            if pivot_sheet_rename["renamed"]:
+                updated_named_range_count += _update_defined_name_sheet_references(
+                    wb,
+                    old_sheet_name=pivot_sheet_rename["old_name"],
+                    new_sheet_name=pivot_sheet_rename["new_name"],
+                )
+                updated_chart_reference_count += _update_workbook_chart_sheet_references(
+                    wb,
+                    old_sheet_name=pivot_sheet_rename["old_name"],
+                    new_sheet_name=pivot_sheet_rename["new_name"],
+                )
+                updated_formula_reference_count += _update_workbook_formula_sheet_references(
+                    wb,
+                    old_sheet_name=pivot_sheet_rename["old_name"],
+                    new_sheet_name=pivot_sheet_rename["new_name"],
+                )
         return {
             "message": f"Sheet renamed from '{old_name}' to '{new_name}'",
             "named_range_reference_updates": updated_named_range_count,
             "chart_reference_updates": updated_chart_reference_count,
+            "formula_reference_updates": updated_formula_reference_count,
+            "pivot_sheet_rename": pivot_sheet_rename,
         }
     except SheetError as e:
         logger.error(str(e))

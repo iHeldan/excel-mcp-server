@@ -9,6 +9,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.formula.tokenizer import Tokenizer
 from openpyxl.utils import column_index_from_string, get_column_letter, range_boundaries
 from openpyxl.utils.cell import quote_sheetname
+from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.worksheet import Worksheet
 
 from .exceptions import WorkbookError
@@ -2127,6 +2128,224 @@ def _remove_named_range_sources(
         else:
             wb.defined_names.pop(name, None)
     return removed
+
+
+def _format_absolute_named_range(
+    min_row: int,
+    min_col: int,
+    max_row: int,
+    max_col: int,
+) -> str:
+    start = f"${get_column_letter(min_col)}${min_row}"
+    end = f"${get_column_letter(max_col)}${max_row}"
+    if start == end:
+        return start
+    return f"{start}:{end}"
+
+
+def _resolve_named_range_target(
+    wb: Any,
+    *,
+    range_ref: Any,
+    sheet_name: str | None = None,
+    scope_sheet: str | None = None,
+) -> tuple[str, str, str]:
+    normalized_range_ref = str(range_ref).strip()
+    if not normalized_range_ref:
+        raise WorkbookError("range_ref is required")
+
+    normalized_sheet_name = sheet_name.strip() if isinstance(sheet_name, str) else None
+    normalized_scope_sheet = scope_sheet.strip() if isinstance(scope_sheet, str) else None
+
+    if "!" in normalized_range_ref:
+        raw_sheet_name, local_range_ref = normalized_range_ref.rsplit("!", 1)
+        target_sheet_name = _normalize_sheet_reference_name(raw_sheet_name)
+        if normalized_sheet_name and target_sheet_name != normalized_sheet_name:
+            raise WorkbookError(
+                "sheet_name does not match the sheet embedded in range_ref"
+            )
+    else:
+        target_sheet_name = normalized_sheet_name or normalized_scope_sheet
+        local_range_ref = normalized_range_ref
+        if not target_sheet_name:
+            raise WorkbookError(
+                "sheet_name is required when range_ref is not sheet-qualified"
+            )
+
+    require_worksheet(
+        wb,
+        target_sheet_name,
+        error_cls=WorkbookError,
+        operation="named range creation",
+    )
+
+    cleaned_local_range = str(local_range_ref).strip()
+    if not cleaned_local_range:
+        raise WorkbookError("range_ref is required")
+
+    try:
+        min_col, min_row, max_col, max_row = range_boundaries(
+            cleaned_local_range.replace("$", "")
+        )
+    except ValueError as exc:
+        raise WorkbookError(
+            "range_ref must be a valid A1-style cell or range reference"
+        ) from exc
+
+    if None in (min_col, min_row, max_col, max_row):
+        raise WorkbookError(
+            "range_ref must be a valid A1-style cell or range reference"
+        )
+
+    absolute_range = _format_absolute_named_range(
+        min_row=min_row,
+        min_col=min_col,
+        max_row=max_row,
+        max_col=max_col,
+    )
+    full_reference = f"{quote_sheetname(target_sheet_name)}!{absolute_range}"
+    return target_sheet_name, absolute_range, full_reference
+
+
+def _matching_named_range_sources_for_scope(
+    wb: Any,
+    *,
+    name: str,
+    scope_sheet: str | None,
+) -> list[dict[str, Any]]:
+    candidates = _named_range_sources(wb, name=name, scope_sheet=scope_sheet)
+    if scope_sheet is None:
+        return [candidate for candidate in candidates if candidate["local_sheet"] is None]
+    return [
+        candidate
+        for candidate in candidates
+        if candidate["local_sheet"] == scope_sheet
+    ]
+
+
+def _remove_named_range_scope_matches(
+    wb: Any,
+    *,
+    matches: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    removed: list[dict[str, Any]] = []
+    for match in matches:
+        removed.append(_serialize_named_range_source(wb, match))
+        if match["container"] == "worksheet":
+            wb[match["local_sheet"]].defined_names.pop(match["name"], None)
+        else:
+            wb.defined_names.pop(match["name"], None)
+    return removed
+
+
+def create_named_range(
+    filepath: str,
+    name: str,
+    range_ref: str,
+    sheet_name: str | None = None,
+    scope_sheet: str | None = None,
+    hidden: bool = False,
+    replace: bool = False,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Create a workbook-level or sheet-scoped named range."""
+    try:
+        normalized_name = str(name).strip()
+        normalized_scope_sheet = scope_sheet.strip() if isinstance(scope_sheet, str) else None
+        normalized_sheet_name = sheet_name.strip() if isinstance(sheet_name, str) else None
+
+        if not normalized_name:
+            raise WorkbookError("name is required")
+        if isinstance(hidden, bool) is False:
+            raise WorkbookError("hidden must be a boolean")
+        if isinstance(replace, bool) is False:
+            raise WorkbookError("replace must be a boolean")
+        if isinstance(dry_run, bool) is False:
+            raise WorkbookError("dry_run must be a boolean")
+
+        with safe_workbook(filepath, save=not dry_run) as wb:
+            if normalized_scope_sheet is not None:
+                scope_ws = require_worksheet(
+                    wb,
+                    normalized_scope_sheet,
+                    error_cls=WorkbookError,
+                    operation="named range creation",
+                )
+                normalized_scope_sheet = scope_ws.title
+
+            target_sheet_name, absolute_range, full_reference = _resolve_named_range_target(
+                wb,
+                range_ref=range_ref,
+                sheet_name=normalized_sheet_name,
+                scope_sheet=normalized_scope_sheet,
+            )
+
+            existing_matches = _matching_named_range_sources_for_scope(
+                wb,
+                name=normalized_name,
+                scope_sheet=normalized_scope_sheet,
+            )
+
+            if existing_matches and not replace:
+                scope_label = (
+                    f"sheet scope '{normalized_scope_sheet}'"
+                    if normalized_scope_sheet
+                    else "workbook scope"
+                )
+                raise WorkbookError(
+                    f"Named range '{normalized_name}' already exists in {scope_label}; "
+                    "set replace=True to overwrite it"
+                )
+
+            replaced = _remove_named_range_scope_matches(
+                wb,
+                matches=existing_matches,
+            ) if existing_matches else []
+
+            if not dry_run:
+                defined_name = DefinedName(
+                    normalized_name,
+                    attr_text=full_reference,
+                    hidden=hidden,
+                )
+                if normalized_scope_sheet is None:
+                    wb.defined_names[normalized_name] = defined_name
+                else:
+                    wb[normalized_scope_sheet].defined_names.add(defined_name)
+
+            created = {
+                "name": normalized_name,
+                "type": "RANGE",
+                "value": full_reference,
+                "destinations": [
+                    {
+                        "sheet_name": target_sheet_name,
+                        "range": absolute_range,
+                    }
+                ],
+                "local_sheet": normalized_scope_sheet,
+                "hidden": hidden,
+                "broken_reference": False,
+                "missing_sheets": [],
+            }
+
+            return {
+                "message": (
+                    f"{'Previewed' if dry_run else 'Created'} named range '{normalized_name}'"
+                ),
+                "name": normalized_name,
+                "sheet_name": target_sheet_name,
+                "scope_sheet": normalized_scope_sheet,
+                "dry_run": dry_run,
+                "replaced_count": len(replaced),
+                "replaced": replaced,
+                "named_range": created,
+            }
+    except WorkbookError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create named range '{name}': {e}")
+        raise WorkbookError(str(e))
 
 
 def _remove_validation_rules(

@@ -35,6 +35,7 @@ from excel_mcp.workbook import (
     apply_workbook_repairs as apply_workbook_repairs_impl,
     analyze_range_impact as analyze_range_impact_impl,
     audit_workbook as audit_workbook_impl,
+    create_named_range as create_named_range_impl,
     detect_circular_dependencies as detect_circular_dependencies_impl,
     delete_named_range as delete_named_range_impl,
     describe_sheet_layout as describe_sheet_layout_impl,
@@ -1674,6 +1675,39 @@ def diff_workbooks(
             get_excel_path(after_filepath),
             sample_limit=sample_limit,
             include_cell_changes=include_cell_changes,
+        ),
+    )
+
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Create Named Range",
+        destructiveHint=True,
+    ),
+)
+def create_named_range(
+    filepath: str,
+    name: str,
+    range_ref: str,
+    sheet_name: Optional[str] = None,
+    scope_sheet: Optional[str] = None,
+    hidden: bool = False,
+    replace: bool = False,
+    dry_run: bool = False,
+) -> str:
+    """Create a workbook-level or sheet-scoped named range."""
+    return _run_tool(
+        "create_named_range",
+        lambda: create_named_range_impl(
+            get_excel_path(filepath),
+            name,
+            range_ref,
+            sheet_name=sheet_name,
+            scope_sheet=scope_sheet,
+            hidden=hidden,
+            replace=replace,
+            dry_run=dry_run,
         ),
     )
 

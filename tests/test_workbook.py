@@ -8,11 +8,13 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.workbook.defined_name import DefinedName
 from excel_mcp.chart import create_chart_in_sheet
+from excel_mcp.pivot import create_pivot_table
 from excel_mcp.sheet import copy_sheet, rename_sheet
 from excel_mcp.server import (
     apply_workbook_repairs as apply_workbook_repairs_tool,
     analyze_range_impact as analyze_range_impact_tool,
     audit_workbook as audit_workbook_tool,
+    create_named_range as create_named_range_tool,
     delete_named_range as delete_named_range_tool,
     diff_workbooks as diff_workbooks_tool,
     explain_formula_cell as explain_formula_cell_tool,
@@ -31,6 +33,7 @@ from excel_mcp.workbook import (
     apply_workbook_repairs,
     analyze_range_impact,
     audit_workbook,
+    create_named_range,
     delete_named_range,
     diff_workbooks,
     explain_formula_cell,
@@ -458,6 +461,131 @@ def test_inspect_named_range_reports_scope_and_breakage(tmp_path):
     assert payload["data"]["matches"][0]["name"] == "BrokenRange"
 
 
+def test_create_named_range_supports_workbook_and_sheet_scope(tmp_path):
+    filepath = str(tmp_path / "named-range-create.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws["A1"] = 10
+    ws["B1"] = 20
+    wb.save(filepath)
+    wb.close()
+
+    workbook_result = create_named_range(
+        filepath,
+        "GlobalRange",
+        "A1:B1",
+        sheet_name="Data",
+    )
+    scoped_result = create_named_range(
+        filepath,
+        "LocalRange",
+        "B1:B1",
+        scope_sheet="Data",
+    )
+
+    assert workbook_result["named_range"]["value"] == "'Data'!$A$1:$B$1"
+    assert workbook_result["named_range"]["local_sheet"] is None
+    assert scoped_result["named_range"]["value"] == "'Data'!$B$1"
+    assert scoped_result["named_range"]["local_sheet"] == "Data"
+
+    named_ranges = list_named_ranges(filepath)
+    assert named_ranges == [
+        {
+            "name": "GlobalRange",
+            "type": "RANGE",
+            "value": "'Data'!$A$1:$B$1",
+            "destinations": [{"sheet_name": "Data", "range": "$A$1:$B$1"}],
+            "local_sheet": None,
+            "hidden": False,
+            "broken_reference": False,
+            "missing_sheets": [],
+        },
+        {
+            "name": "LocalRange",
+            "type": "RANGE",
+            "value": "'Data'!$B$1",
+            "destinations": [{"sheet_name": "Data", "range": "$B$1"}],
+            "local_sheet": "Data",
+            "hidden": False,
+            "broken_reference": False,
+            "missing_sheets": [],
+        },
+    ]
+
+    payload = _load_tool_payload(
+        create_named_range_tool(
+            filepath,
+            "ToolRange",
+            "A1:A1",
+            sheet_name="Data",
+        )
+    )
+    assert payload["operation"] == "create_named_range"
+    assert payload["data"]["named_range"]["name"] == "ToolRange"
+
+
+def test_create_named_range_supports_dry_run_and_replace(tmp_path):
+    filepath = str(tmp_path / "named-range-create-dry-run.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws["A1"] = 10
+    ws["A2"] = 20
+    wb.save(filepath)
+    wb.close()
+
+    preview = create_named_range(
+        filepath,
+        "PreviewRange",
+        "A1:A2",
+        sheet_name="Data",
+        dry_run=True,
+    )
+    assert preview["dry_run"] is True
+    assert preview["replaced_count"] == 0
+    assert list_named_ranges(filepath) == []
+
+    create_named_range(
+        filepath,
+        "PreviewRange",
+        "A1:A2",
+        sheet_name="Data",
+    )
+
+    replace_preview = create_named_range(
+        filepath,
+        "PreviewRange",
+        "A2:A2",
+        sheet_name="Data",
+        replace=True,
+        dry_run=True,
+    )
+    assert replace_preview["replaced_count"] == 1
+    assert replace_preview["replaced"][0]["value"] == "'Data'!$A$1:$A$2"
+
+    replaced = create_named_range(
+        filepath,
+        "PreviewRange",
+        "A2:A2",
+        sheet_name="Data",
+        replace=True,
+    )
+    assert replaced["replaced_count"] == 1
+    assert list_named_ranges(filepath) == [
+        {
+            "name": "PreviewRange",
+            "type": "RANGE",
+            "value": "'Data'!$A$2",
+            "destinations": [{"sheet_name": "Data", "range": "$A$2"}],
+            "local_sheet": None,
+            "hidden": False,
+            "broken_reference": False,
+            "missing_sheets": [],
+        }
+    ]
+
+
 def test_rename_sheet_updates_workbook_and_local_named_ranges(tmp_path):
     filepath = str(tmp_path / "named-range-rename.xlsx")
     wb = Workbook()
@@ -507,6 +635,51 @@ def test_rename_sheet_updates_workbook_and_local_named_ranges(tmp_path):
 
     local_result = inspect_named_range(filepath, "LocalRange", scope_sheet="Revenue")
     assert local_result["matches"][0]["destinations"] == [{"sheet_name": "Revenue", "range": "$B$1"}]
+
+
+def test_rename_sheet_updates_formulas_and_generated_pivot_sheet(tmp_path):
+    filepath = str(tmp_path / "pivot-rename-sync.xlsx")
+    wb = Workbook()
+    data_ws = wb.active
+    data_ws.title = "Data"
+    for row in [
+        ("Region", "Product", "Sales"),
+        ("North", "Widget", 100),
+        ("North", "Gadget", 200),
+        ("South", "Widget", 150),
+    ]:
+        data_ws.append(row)
+    summary_ws = wb.create_sheet("Summary")
+    summary_ws["A1"] = "=Data!C2"
+    summary_ws["B1"] = "Data!C2"
+    wb.save(filepath)
+    wb.close()
+
+    create_pivot_table(
+        filepath,
+        "Data",
+        "A1:C4",
+        rows=["Region"],
+        values=["Sales"],
+    )
+
+    result = rename_sheet(filepath, "Data", "Revenue")
+
+    assert result["formula_reference_updates"] >= 1
+    assert result["pivot_sheet_rename"] == {
+        "attempted": True,
+        "renamed": True,
+        "old_name": "Data_pivot",
+        "new_name": "Revenue_pivot",
+        "skipped_reason": None,
+    }
+
+    wb = load_workbook(filepath)
+    assert "Revenue_pivot" in wb.sheetnames
+    assert "Data_pivot" not in wb.sheetnames
+    assert wb["Summary"]["A1"].value == "='Revenue'!C2"
+    assert wb["Summary"]["B1"].value == "Data!C2"
+    wb.close()
 
 
 def test_copy_sheet_duplicates_local_named_ranges_for_target_sheet(tmp_path):

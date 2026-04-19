@@ -189,6 +189,8 @@ Returns matches under `data.matches`:
   Explains a formula cell's direct references, upstream formula-chain cells, and downstream dependent formulas. Named ranges and structured references are resolved to concrete workbook ranges when possible, and the response now includes a compact `formula_chain` summary with depth layers, sampled edges and root-to-leaf paths, leaf-formula samples, and a truncation flag when `max_depth` clips a deeper chain.
 - `detect_circular_dependencies(filepath: str, sample_limit: int = 25) -> str`
   Detects workbook formula cycles, including self-references and multi-cell dependency loops. Named ranges and structured references are resolved through the workbook graph before cycle analysis, and the response returns compact sampled cycle groups.
+- `create_named_range(filepath: str, name: str, range_ref: str, sheet_name: Optional[str] = None, scope_sheet: Optional[str] = None, hidden: bool = False, replace: bool = False, dry_run: bool = False) -> str`
+  Creates a workbook-level or sheet-scoped named range that points at an A1-style worksheet cell or range. If `range_ref` is not sheet-qualified, pass `sheet_name` or rely on `scope_sheet` to anchor it. Use `replace=True` to overwrite an existing name in the same scope and `dry_run=True` to preview the result first.
 - `inspect_named_range(filepath: str, name: str, scope_sheet: Optional[str] = None) -> str`
   Inspects a defined name, including scope, destinations, hidden state, and whether it points at missing sheets or broken references.
 - `list_named_ranges(filepath: str) -> str`
@@ -310,7 +312,7 @@ Returns matches under `data.matches`:
 - `delete_worksheet(filepath: str, sheet_name: str) -> str`
   Deletes a worksheet. The final remaining sheet cannot be deleted.
 - `rename_worksheet(filepath: str, old_name: str, new_name: str) -> str`
-  Renames a worksheet and keeps both chart-series references and named-range sheet references aligned for workbook-scoped or sheet-scoped names that point at the renamed sheet.
+  Renames a worksheet and keeps formula cells, chart-series references, and named-range sheet references aligned. When a default sibling pivot sheet such as `Data_pivot` exists, SheetForge also renames it to match the new worksheet name when no conflict blocks that move.
 - `set_worksheet_visibility(filepath: str, sheet_name: str, visibility: str, dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
   Sets worksheet visibility to `visible`, `hidden`, or `veryHidden`, and supports preview mode. Committed writes stay compact unless `include_changes=True`.
 - `get_worksheet_protection(filepath: str, sheet_name: str) -> str`
