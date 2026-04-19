@@ -1,6 +1,6 @@
 import logging
 import re
-from collections import Counter, OrderedDict
+from collections import Counter, OrderedDict, deque
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -1159,6 +1159,108 @@ def _formula_dependency_graph(
                         )
 
     return graph
+
+
+def _collect_formula_precedent_entries(
+    wb: Any,
+    *,
+    formula_sheet_name: str,
+    formula_cell: Any,
+) -> list[dict[str, Any]]:
+    try:
+        tokenizer = Tokenizer(formula_cell.value)
+    except Exception:
+        return []
+
+    formula_precedents: list[dict[str, Any]] = []
+    seen_formula_cells: set[tuple[str, str]] = set()
+
+    for token in tokenizer.items:
+        if token.type != "OPERAND" or token.subtype != "RANGE":
+            continue
+
+        token_value = str(token.value).strip()
+        if not token_value:
+            continue
+
+        resolved_targets = _resolve_formula_reference_targets(
+            wb,
+            token_value=token_value,
+            formula_sheet_name=formula_sheet_name,
+            formula_row=formula_cell.row,
+        )
+        for target in resolved_targets:
+            target_sheet_name = target.get("sheet_name")
+            target_range = target.get("range")
+            if not target_sheet_name or not target_range or target_sheet_name not in wb.sheetnames:
+                continue
+
+            target_ws = wb[target_sheet_name]
+            if _sheet_type(target_ws) == "chartsheet":
+                continue
+
+            target_bounds, _ = _parse_range_reference(
+                target_range,
+                worksheet=target_ws,
+                expected_sheet=target_sheet_name,
+                error_cls=WorkbookError,
+            )
+            for row in target_ws.iter_rows(
+                min_row=target_bounds[0],
+                max_row=target_bounds[2],
+                min_col=target_bounds[1],
+                max_col=target_bounds[3],
+            ):
+                for precedent_cell in row:
+                    if not isinstance(precedent_cell.value, str) or not precedent_cell.value.startswith("="):
+                        continue
+                    precedent_key = (target_sheet_name, precedent_cell.coordinate)
+                    if precedent_key in seen_formula_cells:
+                        continue
+                    seen_formula_cells.add(precedent_key)
+                    formula_precedents.append(
+                        {
+                            "sheet_name": target_sheet_name,
+                            "cell": precedent_cell.coordinate,
+                            "formula": precedent_cell.value,
+                            "reached_via": target["reference"],
+                        }
+                    )
+
+    return formula_precedents
+
+
+def _sample_formula_chain_paths(
+    *,
+    root_key: tuple[str, str],
+    child_map: dict[tuple[str, str], list[tuple[str, str]]],
+    path_limit: int,
+) -> list[list[dict[str, Any]]]:
+    sampled_paths: list[list[dict[str, Any]]] = []
+    frontier: deque[tuple[tuple[str, str], list[tuple[str, str]]]] = deque([(root_key, [root_key])])
+
+    while frontier and len(sampled_paths) < path_limit:
+        current_key, path = frontier.popleft()
+        child_keys = child_map.get(current_key, [])
+        if not child_keys:
+            if len(path) > 1:
+                sampled_paths.append(
+                    [
+                        {
+                            "sheet_name": sheet_name,
+                            "cell": cell,
+                        }
+                        for sheet_name, cell in path
+                    ]
+                )
+            continue
+
+        for child_key in child_keys:
+            if child_key in path:
+                continue
+            frontier.append((child_key, path + [child_key]))
+
+    return sampled_paths
 
 
 def _tarjan_strongly_connected_components(
@@ -4694,108 +4796,94 @@ def explain_formula_cell(
                 )
 
             direct_formula_precedents: list[dict[str, Any]] = []
-            seen_formula_cells: set[tuple[str, str]] = set()
-            frontier: list[tuple[int, dict[str, Any]]] = []
-            for reference in direct_references:
-                for target in reference["targets"]:
-                    target_sheet_name = target.get("sheet_name")
-                    target_range = target.get("range")
-                    if not target_sheet_name or not target_range or target_sheet_name not in wb.sheetnames:
-                        continue
-                    target_ws = wb[target_sheet_name]
-                    if _sheet_type(target_ws) == "chartsheet":
-                        continue
-                    target_bounds, _ = _parse_range_reference(
-                        target_range,
-                        worksheet=target_ws,
-                        expected_sheet=target_sheet_name,
-                        error_cls=WorkbookError,
-                    )
-                    for row in target_ws.iter_rows(
-                        min_row=target_bounds[0],
-                        max_row=target_bounds[2],
-                        min_col=target_bounds[1],
-                        max_col=target_bounds[3],
-                    ):
-                        for precedent_cell in row:
-                            if not isinstance(precedent_cell.value, str) or not precedent_cell.value.startswith("="):
-                                continue
-                            precedent_key = (target_sheet_name, precedent_cell.coordinate)
-                            if precedent_key in seen_formula_cells:
-                                continue
-                            seen_formula_cells.add(precedent_key)
-                            precedent_entry = {
-                                "sheet_name": target_sheet_name,
-                                "cell": precedent_cell.coordinate,
-                                "formula": precedent_cell.value,
-                                "depth": 1,
-                                "reached_via": target["reference"],
-                            }
-                            direct_formula_precedents.append(precedent_entry)
-                            frontier.append((1, precedent_entry))
-
             transitive_formula_precedents: list[dict[str, Any]] = []
+            seen_formula_cells: set[tuple[str, str]] = set()
+            root_key = (sheet_name, formula_cell.coordinate)
+            chain_children: dict[tuple[str, str], list[tuple[str, str]]] = {}
+            chain_edges: list[dict[str, Any]] = []
+            non_leaf_formula_cells: set[tuple[str, str]] = set()
+            frontier: deque[dict[str, Any]] = deque()
+
+            direct_precedent_entries = _collect_formula_precedent_entries(
+                wb,
+                formula_sheet_name=sheet_name,
+                formula_cell=formula_cell,
+            )
+            for precedent in direct_precedent_entries:
+                precedent_key = (precedent["sheet_name"], precedent["cell"])
+                if precedent_key in seen_formula_cells:
+                    continue
+                seen_formula_cells.add(precedent_key)
+                precedent_entry = dict(precedent)
+                precedent_entry["depth"] = 1
+                direct_formula_precedents.append(precedent_entry)
+                frontier.append(precedent_entry)
+                chain_children.setdefault(root_key, []).append(precedent_key)
+                chain_edges.append(
+                    {
+                        "from_sheet_name": sheet_name,
+                        "from_cell": formula_cell.coordinate,
+                        "to_sheet_name": precedent["sheet_name"],
+                        "to_cell": precedent["cell"],
+                        "via_reference": precedent["reached_via"],
+                        "depth": 1,
+                    }
+                )
+
+            chain_truncated = False
             while frontier:
-                depth, precedent_entry = frontier.pop(0)
+                precedent_entry = frontier.popleft()
+                depth = int(precedent_entry["depth"])
                 if depth >= max_depth:
+                    if _collect_formula_precedent_entries(
+                        wb,
+                        formula_sheet_name=precedent_entry["sheet_name"],
+                        formula_cell=wb[precedent_entry["sheet_name"]][precedent_entry["cell"]],
+                    ):
+                        chain_truncated = True
+                        non_leaf_formula_cells.add(
+                            (precedent_entry["sheet_name"], precedent_entry["cell"])
+                        )
                     continue
 
                 precedent_ws = wb[precedent_entry["sheet_name"]]
                 precedent_cell = precedent_ws[precedent_entry["cell"]]
-                precedent_tokenizer = Tokenizer(precedent_cell.value)
-                for token in precedent_tokenizer.items:
-                    if token.type != "OPERAND" or token.subtype != "RANGE":
-                        continue
-                    token_value = str(token.value).strip()
-                    if not token_value:
-                        continue
-
-                    resolved_targets = _resolve_formula_reference_targets(
-                        wb,
-                        token_value=token_value,
-                        formula_sheet_name=precedent_entry["sheet_name"],
-                        formula_row=precedent_cell.row,
+                nested_precedents = _collect_formula_precedent_entries(
+                    wb,
+                    formula_sheet_name=precedent_entry["sheet_name"],
+                    formula_cell=precedent_cell,
+                )
+                parent_key = (precedent_entry["sheet_name"], precedent_entry["cell"])
+                for nested_precedent in nested_precedents:
+                    nested_key = (nested_precedent["sheet_name"], nested_precedent["cell"])
+                    chain_edges.append(
+                        {
+                            "from_sheet_name": precedent_entry["sheet_name"],
+                            "from_cell": precedent_entry["cell"],
+                            "to_sheet_name": nested_precedent["sheet_name"],
+                            "to_cell": nested_precedent["cell"],
+                            "via_reference": nested_precedent["reached_via"],
+                            "depth": depth + 1,
+                        }
                     )
-                    for target in resolved_targets:
-                        target_sheet_name = target.get("sheet_name")
-                        target_range = target.get("range")
-                        if not target_sheet_name or not target_range or target_sheet_name not in wb.sheetnames:
-                            continue
-                        target_ws = wb[target_sheet_name]
-                        if _sheet_type(target_ws) == "chartsheet":
-                            continue
-                        target_bounds, _ = _parse_range_reference(
-                            target_range,
-                            worksheet=target_ws,
-                            expected_sheet=target_sheet_name,
-                            error_cls=WorkbookError,
-                        )
-                        for row in target_ws.iter_rows(
-                            min_row=target_bounds[0],
-                            max_row=target_bounds[2],
-                            min_col=target_bounds[1],
-                            max_col=target_bounds[3],
-                        ):
-                            for nested_cell in row:
-                                if not isinstance(nested_cell.value, str) or not nested_cell.value.startswith("="):
-                                    continue
-                                nested_key = (target_sheet_name, nested_cell.coordinate)
-                                if nested_key in seen_formula_cells:
-                                    continue
-                                seen_formula_cells.add(nested_key)
-                                nested_entry = {
-                                    "sheet_name": target_sheet_name,
-                                    "cell": nested_cell.coordinate,
-                                    "formula": nested_cell.value,
-                                    "depth": depth + 1,
-                                    "reached_via": target["reference"],
-                                    "parent_formula_cell": {
-                                        "sheet_name": precedent_entry["sheet_name"],
-                                        "cell": precedent_entry["cell"],
-                                    },
-                                }
-                                transitive_formula_precedents.append(nested_entry)
-                                frontier.append((depth + 1, nested_entry))
+                    chain_children.setdefault(parent_key, []).append(nested_key)
+                    non_leaf_formula_cells.add(parent_key)
+                    if nested_key in seen_formula_cells:
+                        continue
+                    seen_formula_cells.add(nested_key)
+                    nested_entry = {
+                        "sheet_name": nested_precedent["sheet_name"],
+                        "cell": nested_precedent["cell"],
+                        "formula": nested_precedent["formula"],
+                        "depth": depth + 1,
+                        "reached_via": nested_precedent["reached_via"],
+                        "parent_formula_cell": {
+                            "sheet_name": precedent_entry["sheet_name"],
+                            "cell": precedent_entry["cell"],
+                        },
+                    }
+                    transitive_formula_precedents.append(nested_entry)
+                    frontier.append(nested_entry)
 
             target_bounds = (
                 formula_cell.row,
@@ -4833,6 +4921,56 @@ def explain_formula_cell(
             if not hints:
                 hints.append("Formula references were resolved without broken workbook links.")
 
+            all_formula_precedents = direct_formula_precedents + transitive_formula_precedents
+            max_depth_reached = max(
+                (int(entry["depth"]) for entry in all_formula_precedents),
+                default=0,
+            )
+            layer_summary: list[dict[str, Any]] = [
+                {
+                    "depth": 0,
+                    "count": 1,
+                    "sample": [
+                        {
+                            "sheet_name": sheet_name,
+                            "cell": formula_cell.coordinate,
+                        }
+                    ],
+                }
+            ]
+            for layer_depth in range(1, max_depth_reached + 1):
+                layer_entries = [
+                    entry for entry in all_formula_precedents if int(entry["depth"]) == layer_depth
+                ]
+                layer_summary.append(
+                    {
+                        "depth": layer_depth,
+                        "count": len(layer_entries),
+                        "sample": [
+                            {
+                                "sheet_name": entry["sheet_name"],
+                                "cell": entry["cell"],
+                            }
+                            for entry in layer_entries[:10]
+                        ],
+                    }
+                )
+
+            leaf_formula_precedents = [
+                {
+                    "sheet_name": entry["sheet_name"],
+                    "cell": entry["cell"],
+                    "depth": entry["depth"],
+                }
+                for entry in all_formula_precedents
+                if (entry["sheet_name"], entry["cell"]) not in non_leaf_formula_cells
+            ]
+            path_sample = _sample_formula_chain_paths(
+                root_key=root_key,
+                child_map=chain_children,
+                path_limit=10,
+            )
+
             return {
                 "sheet_name": sheet_name,
                 "cell": formula_cell.coordinate,
@@ -4844,6 +4982,22 @@ def explain_formula_cell(
                 "direct_formula_precedents": direct_formula_precedents,
                 "transitive_formula_precedent_count": len(transitive_formula_precedents),
                 "transitive_formula_precedents": transitive_formula_precedents,
+                "formula_chain": {
+                    "root": {
+                        "sheet_name": sheet_name,
+                        "cell": formula_cell.coordinate,
+                    },
+                    "precedent_formula_count": len(all_formula_precedents),
+                    "max_depth_requested": max_depth,
+                    "max_depth_reached": max_depth_reached,
+                    "truncated": chain_truncated,
+                    "layer_summary": layer_summary,
+                    "edge_count": len(chain_edges),
+                    "edge_sample": chain_edges[:20],
+                    "leaf_formula_precedent_count": len(leaf_formula_precedents),
+                    "leaf_formula_precedents": leaf_formula_precedents[:10],
+                    "path_sample": path_sample,
+                },
                 "dependent_formulas": {
                     "count": len(dependents),
                     "sample": dependents[:10],

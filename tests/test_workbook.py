@@ -692,6 +692,16 @@ def test_explain_formula_cell_reports_named_ranges_and_dependents(tmp_path):
     assert result["direct_reference_count"] == 1
     assert result["direct_references"][0]["reference_type"] == "named_range"
     assert result["direct_references"][0]["targets"][0]["reference"] == "Data!A2:A3"
+    assert result["formula_chain"]["precedent_formula_count"] == 0
+    assert result["formula_chain"]["max_depth_reached"] == 0
+    assert result["formula_chain"]["truncated"] is False
+    assert result["formula_chain"]["layer_summary"] == [
+        {
+            "depth": 0,
+            "count": 1,
+            "sample": [{"sheet_name": "Data", "cell": "B2"}],
+        }
+    ]
     assert result["dependent_formulas"]["count"] == 1
     assert result["dependent_formulas"]["sample"][0]["cell"] == "C2"
     assert "Formula depends on named ranges." in result["hints"]
@@ -721,6 +731,106 @@ def test_explain_formula_cell_reports_transitive_formula_precedents(tmp_path):
     assert result["transitive_formula_precedent_count"] == 1
     assert result["transitive_formula_precedents"][0]["cell"] == "B2"
     assert result["transitive_formula_precedents"][0]["depth"] == 2
+    assert result["formula_chain"]["precedent_formula_count"] == 2
+    assert result["formula_chain"]["max_depth_reached"] == 2
+    assert result["formula_chain"]["truncated"] is False
+    assert result["formula_chain"]["edge_count"] == 2
+    assert result["formula_chain"]["leaf_formula_precedent_count"] == 1
+    assert result["formula_chain"]["leaf_formula_precedents"] == [
+        {"sheet_name": "Data", "cell": "B2", "depth": 2}
+    ]
+    assert result["formula_chain"]["path_sample"] == [
+        [
+            {"sheet_name": "Data", "cell": "D2"},
+            {"sheet_name": "Data", "cell": "C2"},
+            {"sheet_name": "Data", "cell": "B2"},
+        ]
+    ]
+
+
+def test_explain_formula_cell_reports_branching_formula_chain_summary(tmp_path):
+    filepath = str(tmp_path / "formula-branching.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws["A2"] = 10
+    ws["A3"] = 20
+    ws["B2"] = "=SUM(A2:A3)"
+    ws["B3"] = "=A2*2"
+    ws["C2"] = "=B2+B3"
+    ws["D2"] = "=C2+5"
+    wb.save(filepath)
+    wb.close()
+
+    result = explain_formula_cell(filepath, "Data", "D2", max_depth=3)
+
+    assert result["formula_chain"]["precedent_formula_count"] == 3
+    assert result["formula_chain"]["max_depth_reached"] == 2
+    assert result["formula_chain"]["edge_count"] == 3
+    assert result["formula_chain"]["leaf_formula_precedent_count"] == 2
+    assert result["formula_chain"]["leaf_formula_precedents"] == [
+        {"sheet_name": "Data", "cell": "B2", "depth": 2},
+        {"sheet_name": "Data", "cell": "B3", "depth": 2},
+    ]
+    assert result["formula_chain"]["layer_summary"] == [
+        {
+            "depth": 0,
+            "count": 1,
+            "sample": [{"sheet_name": "Data", "cell": "D2"}],
+        },
+        {
+            "depth": 1,
+            "count": 1,
+            "sample": [{"sheet_name": "Data", "cell": "C2"}],
+        },
+        {
+            "depth": 2,
+            "count": 2,
+            "sample": [
+                {"sheet_name": "Data", "cell": "B2"},
+                {"sheet_name": "Data", "cell": "B3"},
+            ],
+        },
+    ]
+    assert result["formula_chain"]["path_sample"] == [
+        [
+            {"sheet_name": "Data", "cell": "D2"},
+            {"sheet_name": "Data", "cell": "C2"},
+            {"sheet_name": "Data", "cell": "B2"},
+        ],
+        [
+            {"sheet_name": "Data", "cell": "D2"},
+            {"sheet_name": "Data", "cell": "C2"},
+            {"sheet_name": "Data", "cell": "B3"},
+        ],
+    ]
+
+
+def test_explain_formula_cell_marks_chain_as_truncated_when_depth_cap_hits(tmp_path):
+    filepath = str(tmp_path / "formula-truncated.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws["A2"] = 10
+    ws["B2"] = "=A2*2"
+    ws["C2"] = "=B2+5"
+    ws["D2"] = "=C2+7"
+    wb.save(filepath)
+    wb.close()
+
+    result = explain_formula_cell(filepath, "Data", "D2", max_depth=1)
+
+    assert result["direct_formula_precedent_count"] == 1
+    assert result["transitive_formula_precedent_count"] == 0
+    assert result["formula_chain"]["max_depth_reached"] == 1
+    assert result["formula_chain"]["truncated"] is True
+    assert result["formula_chain"]["leaf_formula_precedent_count"] == 0
+    assert result["formula_chain"]["path_sample"] == [
+        [
+            {"sheet_name": "Data", "cell": "D2"},
+            {"sheet_name": "Data", "cell": "C2"},
+        ]
+    ]
 
 
 def test_analyze_range_impact_reports_overlapping_structures(tmp_workbook):

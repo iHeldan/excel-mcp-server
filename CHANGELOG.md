@@ -24,6 +24,10 @@
 - Added `inspect_named_range`, `delete_named_range`, `inspect_data_validation_rules`, `remove_data_validation_rules`, `inspect_conditional_format_rules`, and `remove_conditional_format_rules` to turn workbook-repair plans into inspect → dry-run → apply workflows.
 - Refreshed the manifest, README, and landing-page copy for the current 74-tool surface and the newer workbook-repair, workbook-diff, formula-lineage, formula-inspection, circular-dependency, layout-introspection, and multi-workbook read helpers.
 
+### Changed
+
+- Expanded `explain_formula_cell` with a compact `formula_chain` summary so agents can see chain depth layers, sampled formula edges, leaf precedents, root-to-leaf path samples, and whether `max_depth` truncated a deeper upstream chain.
+
 ## 0.5.0 - 2026-04-18
 
 This minor release expands SheetForge MCP from workbook CRUD into a stronger workbook-analysis and large-read workflow for AI agents and automation pipelines.
