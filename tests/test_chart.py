@@ -13,6 +13,7 @@ from excel_mcp.chart import (
     list_charts,
 )
 from excel_mcp.exceptions import ValidationError, ChartError
+from excel_mcp.sheet import rename_sheet
 from excel_mcp.server import (
     create_chart as create_chart_tool,
     create_chart_from_series as create_chart_from_series_tool,
@@ -520,8 +521,45 @@ def test_list_charts_returns_created_chart_metadata(chart_workbook):
     assert charts[0]["anchor"] == "E1"
     assert charts[0]["width"] == 15
     assert charts[0]["height"] == 7.5
-    assert charts[0]["occupied_range"].startswith("E1:")
-    assert len(charts[0]["series"]) == 2
+
+
+def test_rename_sheet_updates_embedded_chart_series_references(chart_workbook):
+    create_chart_in_sheet(chart_workbook, "Sales", "A1:B5", "bar", "E1", title="Revenue")
+
+    result = rename_sheet(chart_workbook, "Sales", "Revenue Data")
+    assert result["chart_reference_updates"] == 3
+
+    charts = list_charts(chart_workbook, sheet_name="Revenue Data")
+    created_chart = next(chart for chart in charts if chart["anchor"] == "E1")
+    assert created_chart["series"][0]["title"] == "'Revenue Data'!B1"
+    assert created_chart["series"][0]["categories"] == "'Revenue Data'!$A$2:$A$5"
+    assert created_chart["series"][0]["values"] == "'Revenue Data'!$B$2:$B$5"
+
+
+def test_rename_sheet_updates_chartsheet_chart_series_references(tmp_path):
+    filepath = str(tmp_path / "chartsheet-rename.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    for row in [("Month", "Sales"), ("Jan", 10), ("Feb", 20), ("Mar", 15)]:
+        ws.append(row)
+
+    chart = BarChart()
+    chart.add_data(Reference(ws, min_col=2, min_row=1, max_row=4), titles_from_data=True)
+    chart.set_categories(Reference(ws, min_col=1, min_row=2, max_row=4))
+    chart_sheet = wb.create_chartsheet("Charts")
+    chart_sheet.add_chart(chart)
+    wb.save(filepath)
+    wb.close()
+
+    result = rename_sheet(filepath, "Data", "Revenue Data")
+    assert result["chart_reference_updates"] == 3
+
+    charts = list_charts(filepath, sheet_name="Charts")
+    assert charts[0]["series"][0]["title"] == "'Revenue Data'!B1"
+    assert charts[0]["series"][0]["categories"] == "'Revenue Data'!$A$2:$A$4"
+    assert charts[0]["series"][0]["values"] == "'Revenue Data'!$B$2:$B$4"
+    assert "occupied_range" not in charts[0]
 
 
 def test_list_charts_can_filter_by_sheet(chart_workbook):

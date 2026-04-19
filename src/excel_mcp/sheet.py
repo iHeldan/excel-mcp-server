@@ -5,12 +5,13 @@ from typing import Any, Dict, Optional
 
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.utils import get_column_letter, column_index_from_string, range_boundaries
+from openpyxl.utils.cell import quote_sheetname
 from openpyxl.styles import Font, Border, PatternFill, Side
 from openpyxl.formula.translate import Translator, TranslatorError
 
 from .cell_utils import parse_cell_range, validate_cell_reference
 from .exceptions import SheetError, ValidationError
-from .workbook import require_worksheet, safe_workbook
+from .workbook import _normalize_sheet_reference_name, require_worksheet, safe_workbook
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,97 @@ def _translated_copy_value(
     except TranslatorError:
         return value
 
+
+def _rewrite_sheet_reference_formula(
+    formula: Any,
+    *,
+    old_sheet_name: str,
+    new_sheet_name: str,
+) -> Any:
+    if not isinstance(formula, str) or "!" not in formula:
+        return formula
+
+    sheet_reference, local_reference = formula.split("!", 1)
+    if _normalize_sheet_reference_name(sheet_reference) != old_sheet_name:
+        return formula
+
+    return f"{quote_sheetname(new_sheet_name)}!{local_reference}"
+
+
+def _update_formula_container_sheet_references(
+    container: Any,
+    *,
+    old_sheet_name: str,
+    new_sheet_name: str,
+) -> int:
+    if container is None:
+        return 0
+
+    updated_count = 0
+    for attr_name in ("numRef", "strRef", "multiLvlStrRef"):
+        reference = getattr(container, attr_name, None)
+        formula = getattr(reference, "f", None)
+        updated_formula = _rewrite_sheet_reference_formula(
+            formula,
+            old_sheet_name=old_sheet_name,
+            new_sheet_name=new_sheet_name,
+        )
+        if updated_formula == formula:
+            continue
+        reference.f = updated_formula
+        updated_count += 1
+
+    return updated_count
+
+
+def _update_chart_sheet_references(
+    chart: Any,
+    *,
+    old_sheet_name: str,
+    new_sheet_name: str,
+) -> int:
+    updated_count = 0
+
+    title = getattr(chart, "title", None)
+    updated_count += _update_formula_container_sheet_references(
+        getattr(title, "tx", None),
+        old_sheet_name=old_sheet_name,
+        new_sheet_name=new_sheet_name,
+    )
+
+    series_items = getattr(chart, "ser", None) or list(getattr(chart, "series", []))
+    for series in series_items:
+        updated_count += _update_formula_container_sheet_references(
+            getattr(series, "tx", None),
+            old_sheet_name=old_sheet_name,
+            new_sheet_name=new_sheet_name,
+        )
+        for attr_name in ("cat", "val", "xVal", "yVal"):
+            updated_count += _update_formula_container_sheet_references(
+                getattr(series, attr_name, None),
+                old_sheet_name=old_sheet_name,
+                new_sheet_name=new_sheet_name,
+            )
+
+    return updated_count
+
+
+def _update_workbook_chart_sheet_references(
+    workbook: Any,
+    *,
+    old_sheet_name: str,
+    new_sheet_name: str,
+) -> int:
+    updated_count = 0
+    for sheet in getattr(workbook, "_sheets", []):
+        for chart in getattr(sheet, "_charts", []):
+            updated_count += _update_chart_sheet_references(
+                chart,
+                old_sheet_name=old_sheet_name,
+                new_sheet_name=new_sheet_name,
+            )
+    return updated_count
+
 def copy_sheet(filepath: str, source_sheet: str, target_sheet: str) -> Dict[str, Any]:
     """Copy a worksheet within the same workbook."""
     try:
@@ -128,7 +220,15 @@ def rename_sheet(filepath: str, old_name: str, new_name: str) -> Dict[str, Any]:
 
             sheet = wb[old_name]
             sheet.title = new_name
-        return {"message": f"Sheet renamed from '{old_name}' to '{new_name}'"}
+            updated_chart_reference_count = _update_workbook_chart_sheet_references(
+                wb,
+                old_sheet_name=old_name,
+                new_sheet_name=new_name,
+            )
+        return {
+            "message": f"Sheet renamed from '{old_name}' to '{new_name}'",
+            "chart_reference_updates": updated_chart_reference_count,
+        }
     except SheetError as e:
         logger.error(str(e))
         raise

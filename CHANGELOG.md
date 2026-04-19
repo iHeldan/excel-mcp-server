@@ -31,6 +31,7 @@
 
 ### Fixed
 
+- Fixed `rename_worksheet` so chart series references now follow the renamed sheet instead of keeping stale source formulas that still point at the old worksheet name.
 - Fixed `copy_range` so copied formulas now translate their relative references to the target cells instead of being pasted back as unchanged formula text.
 - Fixed range-read continuation cursors so follow-up pages now preserve the original payload mode, including `values_only=True` and compact cell-metadata reads, instead of silently falling back to the default cell-metadata shape.
 - Fixed `plan_workbook_repairs` so small `sample_limit` values no longer drop whole repair classes from the plan when the underlying audit contains more findings than fit in the sampled audit payload.
