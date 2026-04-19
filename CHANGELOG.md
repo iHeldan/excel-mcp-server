@@ -2,8 +2,11 @@
 
 ## Unreleased
 
+## 0.6.1 - 2026-04-19
+
 ### Fixed
 
+- Fixed Python packaging so built wheels now include the `excel_mcp` module files instead of publishing metadata-only wheels.
 - Fixed `query_table`, `aggregate_table`, and the multi-workbook filter helpers so mixed-type rows such as totals formulas no longer abort `gt` / `gte` / `lt` / `lte` filters; incompatible rows are treated as non-matches instead.
 - Fixed filter DX so `ne` now aliases `neq`, and `in` / `not_in` filters now accept the shorthand `value: [...]` in addition to `values: [...]`.
 - Fixed formatting color parsing so `format_range` and `format_ranges` now accept CSS-style `#RRGGBB` and `#AARRGGBB` inputs, with clearer error guidance when a color token is invalid.
