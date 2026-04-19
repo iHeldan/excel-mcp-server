@@ -71,6 +71,7 @@ from excel_mcp.query import (
 )
 from excel_mcp.pivot import create_pivot_table as create_pivot_table_impl
 from excel_mcp.tables import (
+    append_excel_table_rows as append_excel_table_rows_impl,
     create_excel_table as create_table_impl,
     list_excel_tables as list_tables_impl,
     read_excel_table as read_excel_table_impl,
@@ -2460,7 +2461,7 @@ def append_table_rows(
     dry_run: bool = False,
     include_changes: Optional[bool] = None,
 ) -> str:
-    """Append dictionary-shaped rows by matching worksheet headers."""
+    """Append dictionary-shaped rows by matching worksheet headers on a worksheet dataset."""
     return _run_tool(
         "append_table_rows",
         lambda: append_table_rows_impl(
@@ -2468,6 +2469,35 @@ def append_table_rows(
             sheet_name,
             rows,
             header_row=header_row,
+            dry_run=dry_run,
+            include_changes=include_changes,
+        ),
+    )
+
+
+@mcp.tool(
+    structured_output=False,
+    annotations=ToolAnnotations(
+        title="Append Excel Table Rows",
+        destructiveHint=True,
+    ),
+)
+def append_excel_table_rows(
+    filepath: str,
+    table_name: str,
+    rows: List[Dict[str, Any]],
+    sheet_name: Optional[str] = None,
+    dry_run: bool = False,
+    include_changes: Optional[bool] = None,
+) -> str:
+    """Append rows to a native Excel table and expand its range safely."""
+    return _run_tool(
+        "append_excel_table_rows",
+        lambda: append_excel_table_rows_impl(
+            get_excel_path(filepath),
+            table_name=table_name,
+            rows=rows,
+            sheet_name=sheet_name,
             dry_run=dry_run,
             include_changes=include_changes,
         ),

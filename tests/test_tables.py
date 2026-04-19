@@ -7,11 +7,13 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 import excel_mcp.server as server_module
 
 from excel_mcp.server import (
+    append_excel_table_rows as append_excel_table_rows_tool,
     list_tables as list_tables_tool,
     read_excel_table as read_excel_table_tool,
     upsert_excel_table_rows as upsert_excel_table_rows_tool,
 )
 from excel_mcp.tables import (
+    append_excel_table_rows,
     create_excel_table,
     list_excel_tables,
     read_excel_table,
@@ -539,6 +541,84 @@ def test_upsert_excel_table_rows_updates_and_appends(tmp_workbook):
     wb.close()
 
 
+def test_append_excel_table_rows_expands_native_table(tmp_workbook):
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
+
+    result = append_excel_table_rows(
+        tmp_workbook,
+        "Customers",
+        rows=[
+            {"Name": "Frank", "Age": 29, "City": "Lahti"},
+            {"Name": "Grace", "Age": 41},
+        ],
+    )
+
+    assert result["appended_rows"] == 2
+    assert result["previous_table_range"] == "A1:C6"
+    assert result["table_range"] == "A1:C8"
+
+    wb = load_workbook(tmp_workbook)
+    ws = wb["Sheet1"]
+    assert ws["A7"].value == "Frank"
+    assert ws["C7"].value == "Lahti"
+    assert ws["A8"].value == "Grace"
+    assert ws.tables["Customers"].ref == "A1:C8"
+    wb.close()
+
+
+def test_append_excel_table_rows_dry_run_does_not_persist(tmp_workbook):
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
+
+    result = append_excel_table_rows(
+        tmp_workbook,
+        "Customers",
+        rows=[{"Name": "Frank", "Age": 29, "City": "Lahti"}],
+        dry_run=True,
+        include_changes=True,
+    )
+
+    assert result["dry_run"] is True
+    assert result["table_range"] == "A1:C7"
+    assert result["changes"][0]["cell"] == "A7"
+
+    wb = load_workbook(tmp_workbook)
+    ws = wb["Sheet1"]
+    assert ws.tables["Customers"].ref == "A1:C6"
+    assert ws["A7"].value is None
+    wb.close()
+
+
+def test_append_excel_table_rows_rejects_totals_row_tables(tmp_path):
+    filepath = str(tmp_path / "append-totals.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["Name", "Qty"])
+    ws.append(["Alice", 1])
+    ws.append(["Total", 1])
+
+    table = Table(displayName="Sales", ref="A1:B3")
+    table.tableStyleInfo = TableStyleInfo(
+        name="TableStyleMedium9",
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=True,
+        showColumnStripes=False,
+    )
+    table.totalsRowShown = True
+    table.totalsRowCount = 1
+    ws.add_table(table)
+    wb.save(filepath)
+    wb.close()
+
+    with pytest.raises(DataError, match="totals row is enabled"):
+        append_excel_table_rows(
+            filepath,
+            "Sales",
+            rows=[{"Name": "Bob", "Qty": 2}],
+        )
+
+
 def test_upsert_excel_table_rows_rejects_occupied_space_below_table(tmp_workbook):
     wb = load_workbook(tmp_workbook)
     ws = wb["Sheet1"]
@@ -646,5 +726,21 @@ def test_upsert_excel_table_rows_tool_returns_json_envelope(tmp_workbook):
     )
 
     assert payload["operation"] == "upsert_excel_table_rows"
+    assert payload["data"]["appended_rows"] == 1
+    assert payload["data"]["table_range"] == "A1:C7"
+
+
+def test_append_excel_table_rows_tool_returns_json_envelope(tmp_workbook):
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
+
+    payload = _load_tool_payload(
+        append_excel_table_rows_tool(
+            tmp_workbook,
+            "Customers",
+            [{"Name": "Frank", "Age": 29, "City": "Lahti"}],
+        )
+    )
+
+    assert payload["operation"] == "append_excel_table_rows"
     assert payload["data"]["appended_rows"] == 1
     assert payload["data"]["table_range"] == "A1:C7"

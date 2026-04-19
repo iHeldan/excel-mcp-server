@@ -237,6 +237,9 @@ Returns matches under `data.matches`:
   Returns exact or partial value matches across the worksheet.
 - `append_table_rows(filepath: str, sheet_name: str, rows: List[Dict[str, Any]], header_row: int = 1, dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
   Appends header-aware rows using dictionary keys that match worksheet headers. Returns `changed_cells` always, and detailed `changes` only when requested or during previews.
+  This tool is for worksheet-shaped datasets, not native Excel tables. If the target rows would land directly under an adjacent native table, SheetForge now rejects the write and points you at `append_excel_table_rows`.
+- `append_excel_table_rows(filepath: str, table_name: str, rows: List[Dict[str, Any]], sheet_name: Optional[str] = None, dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
+  Appends rows to a native Excel table by matching table headers and expands the table `ref` safely. Refuses to grow the table into occupied cells and rejects append attempts while a totals row is enabled.
 - `upsert_excel_table_rows(filepath: str, table_name: str, key_column: str, rows: List[Dict[str, Any]], sheet_name: Optional[str] = None, dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
   Updates matching rows inside a native Excel table and appends missing keys in one call. Missing rows expand the table's `ref` automatically, and the tool refuses to grow the table into already occupied cells below it. Tables with an enabled totals row are update-only for now; append attempts are rejected.
 - `update_rows_by_key(filepath: str, sheet_name: str, key_column: str, updates: List[Dict[str, Any]], header_row: int = 1, dry_run: bool = False, include_changes: Optional[bool] = None) -> str`
@@ -356,6 +359,7 @@ Returns matches under `data.matches`:
 - Use `read_excel_as_table` when the source data is tabular and headers matter.
 - Use `read_data_from_excel` when you need cell addresses or validation metadata.
 - Use `compact=True` on read tools when you want to minimize response size for agent workflows.
+- Use `append_excel_table_rows` when the workbook already has a native Excel table and you want a plain append that keeps the table range in sync.
 - Use `upsert_excel_table_rows` when the workbook already has a native Excel table and your workflow is naturally key-based.
 - Use `format_ranges` instead of repeated `format_range` calls when you're styling a report or dashboard in several places at once.
 - Use `create_chart` as the default chart authoring entry point. Pass `data_range` for contiguous source data, or `series` plus optional `categories_range` when the chart data lives in non-adjacent columns.

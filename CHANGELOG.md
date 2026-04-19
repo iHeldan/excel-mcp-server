@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Added `append_excel_table_rows` so agents can append rows to native Excel tables without forcing a key-based upsert flow, while still expanding the table `ref` safely and respecting occupied-cell and totals-row guardrails.
+
+### Changed
+
+- Changed `append_table_rows` to reject writes that would land directly below an adjacent native Excel table, and to point callers at `append_excel_table_rows` instead of silently leaving the table range stale.
+
 ## 0.6.1 - 2026-04-19
 
 ### Fixed

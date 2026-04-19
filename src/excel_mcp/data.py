@@ -212,6 +212,39 @@ def _find_last_data_row(ws: Worksheet, header_row: int, columns: List[int]) -> i
     return header_row
 
 
+def _native_table_append_conflict(
+    ws: Worksheet,
+    *,
+    header_row: int,
+    next_row: int,
+    requested_columns: set[str],
+) -> Optional[Dict[str, Any]]:
+    if not hasattr(ws, "tables"):
+        return None
+
+    for table in ws.tables.values():
+        min_col, min_row, max_col, max_row = range_boundaries(table.ref)
+        if min_row != header_row or next_row != max_row + 1:
+            continue
+
+        table_headers: set[str] = set()
+        for column_index in range(min_col, max_col + 1):
+            value = ws.cell(row=min_row, column=column_index).value
+            if value is None or str(value).strip() == "":
+                continue
+            table_headers.add(str(value))
+
+        if requested_columns and not requested_columns.issubset(table_headers):
+            continue
+
+        return {
+            "table_name": table.displayName,
+            "totals_row_shown": bool(getattr(table, "totalsRowShown", False)),
+        }
+
+    return None
+
+
 def _build_cell_change(
     sheet_name: str,
     row: int,
@@ -1680,6 +1713,27 @@ def append_table_rows(
             ordered_columns = sorted(header_map.items(), key=lambda item: item[1])
             last_data_row = _find_last_data_row(ws, header_row, list(header_map.values()))
             next_row = last_data_row + 1
+            requested_columns = {key for row in rows for key in row.keys()}
+            native_table_conflict = _native_table_append_conflict(
+                ws,
+                header_row=header_row,
+                next_row=next_row,
+                requested_columns=requested_columns,
+            )
+            if native_table_conflict is not None:
+                table_name = native_table_conflict["table_name"]
+                if native_table_conflict["totals_row_shown"]:
+                    raise DataError(
+                        "append_table_rows would write directly below native Excel table "
+                        f"'{table_name}' without expanding its range. Use append_excel_table_rows "
+                        "for native tables instead. This table currently has a totals row enabled, "
+                        "so remove the totals row before appending."
+                    )
+                raise DataError(
+                    "append_table_rows would write directly below native Excel table "
+                    f"'{table_name}' without expanding its range. Use append_excel_table_rows "
+                    "to keep the native table in sync."
+                )
 
             changes: List[Dict[str, Any]] = []
             for row_offset, row_data in enumerate(rows):

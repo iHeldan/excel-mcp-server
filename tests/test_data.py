@@ -1265,6 +1265,19 @@ def test_append_table_rows_dry_run_does_not_persist(tmp_workbook):
     assert table["total_rows"] == 5
 
 
+def test_append_table_rows_rejects_native_table_boundary(tmp_workbook):
+    from excel_mcp.tables import create_excel_table
+
+    create_excel_table(tmp_workbook, "Sheet1", "A1:C6", table_name="Customers")
+
+    with pytest.raises(DataError, match="append_excel_table_rows"):
+        append_table_rows(
+            tmp_workbook,
+            "Sheet1",
+            [{"Name": "Mallory", "Age": 44, "City": "Lahti"}],
+        )
+
+
 def test_update_rows_by_key_updates_matching_rows_and_reports_missing_keys(tmp_workbook):
     result = update_rows_by_key(
         tmp_workbook,

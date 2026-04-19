@@ -564,3 +564,103 @@ def upsert_excel_table_rows(
     except Exception as e:
         logger.error(f"Failed to upsert table rows: {e}")
         raise DataError(str(e))
+
+
+def append_excel_table_rows(
+    filepath: str,
+    table_name: str,
+    rows: list[dict[str, Any]],
+    sheet_name: Optional[str] = None,
+    dry_run: bool = False,
+    include_changes: Optional[bool] = None,
+) -> dict[str, Any]:
+    """Append rows to a native Excel table and expand the table range safely."""
+    try:
+        if not rows:
+            raise DataError("No rows provided to append")
+        if not all(isinstance(row, dict) for row in rows):
+            raise DataError("Rows must be a list of objects keyed by column name")
+
+        with safe_workbook(filepath, save=not dry_run) as wb:
+            current_sheet_name, ws, table = _find_table(wb, table_name, sheet_name=sheet_name)
+            header_map = _table_header_map(ws, table)
+
+            unknown_columns = sorted(
+                {
+                    key
+                    for row in rows
+                    for key in row.keys()
+                    if key not in header_map
+                }
+            )
+            if unknown_columns:
+                raise DataError(f"Unknown columns for append: {', '.join(unknown_columns)}")
+
+            min_col, min_row, max_col, max_row, data_start_row, data_end_row = _table_data_bounds(
+                table
+            )
+            totals_row_count = int(table.totalsRowCount or 0)
+            if totals_row_count > 0:
+                _reject_totals_row_appends(table)
+
+            append_start_row = data_start_row if data_start_row > data_end_row else data_end_row + 1
+            _ensure_table_append_space_clear(
+                ws,
+                start_row=append_start_row,
+                row_count=len(rows),
+                min_col=min_col,
+                max_col=max_col,
+            )
+
+            ordered_columns = sorted(header_map.items(), key=lambda item: item[1])
+            changes: list[dict[str, Any]] = []
+            for row_offset, row_data in enumerate(rows):
+                target_row = append_start_row + row_offset
+                for column_name, col_idx in ordered_columns:
+                    if column_name not in row_data:
+                        continue
+                    changes.append(
+                        _build_cell_change(
+                            sheet_name=current_sheet_name,
+                            row=target_row,
+                            col=col_idx,
+                            old_value=None,
+                            new_value=row_data[column_name],
+                            column_name=column_name,
+                        )
+                    )
+
+            previous_table_range = table.ref
+            new_max_row = max_row + len(rows)
+            table_range = _range_from_bounds(min_col, min_row, max_col, new_max_row)
+
+            if not dry_run:
+                for row_offset, row_data in enumerate(rows):
+                    target_row = append_start_row + row_offset
+                    for column_name, col_idx in ordered_columns:
+                        if column_name not in row_data:
+                            continue
+                        ws.cell(row=target_row, column=col_idx, value=row_data[column_name])
+                table.ref = table_range
+
+        result = {
+            "message": (
+                f"{'Previewed' if dry_run else 'Appended'} {len(rows)} row(s) to table "
+                f"'{table_name}' on '{current_sheet_name}'"
+            ),
+            "sheet_name": current_sheet_name,
+            "table_name": table_name,
+            "appended_rows": len(rows),
+            "changed_cells": len(changes),
+            "previous_table_range": previous_table_range,
+            "table_range": table_range,
+            "dry_run": dry_run,
+        }
+        if _should_include_changes(dry_run, include_changes):
+            result["changes"] = changes
+        return result
+    except DataError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to append native table rows: {e}")
+        raise DataError(str(e))
