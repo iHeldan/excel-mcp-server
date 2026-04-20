@@ -2555,7 +2555,12 @@ def _persist_workbook_atomically(wb: Workbook, filepath: str) -> None:
 
 def create_workbook(filepath: str, sheet_name: str = "Sheet1") -> dict[str, Any]:
     """Create a new Excel workbook with optional custom sheet name"""
+    wb: Workbook | None = None
     try:
+        path = Path(filepath)
+        if path.exists():
+            raise WorkbookError(f"Workbook already exists: {filepath}")
+
         wb = Workbook()
         # Rename default sheet
         if "Sheet" in wb.sheetnames:
@@ -2564,17 +2569,21 @@ def create_workbook(filepath: str, sheet_name: str = "Sheet1") -> dict[str, Any]
         else:
             wb.create_sheet(sheet_name)
 
-        path = Path(filepath)
         path.parent.mkdir(parents=True, exist_ok=True)
-        wb.save(str(path))
+        _persist_workbook_atomically(wb, str(path))
         return {
             "message": f"Created workbook: {filepath}",
             "active_sheet": sheet_name,
             "workbook": wb
         }
+    except WorkbookError:
+        raise
     except Exception as e:
         logger.error(f"Failed to create workbook: {e}")
         raise WorkbookError(f"Failed to create workbook: {e!s}")
+    finally:
+        if wb is not None:
+            wb.close()
 
 def get_or_create_workbook(filepath: str) -> Workbook:
     """Load an existing workbook. Raises FileNotFoundError if it doesn't exist."""

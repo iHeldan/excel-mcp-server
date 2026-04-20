@@ -7,6 +7,19 @@ from excel_mcp.exceptions import WorkbookError
 from excel_mcp.workbook import safe_workbook
 
 
+def _assert_no_sheetforge_artifacts(workbook_path: Path) -> None:
+    temp_leftovers = list(
+        workbook_path.parent.glob(
+            f".{workbook_path.stem}.sheetforge-*{workbook_path.suffix or '.xlsx'}"
+        )
+    )
+    backup_leftovers = list(
+        workbook_path.parent.glob(f".{workbook_path.name}.sheetforge-backup-*.bak")
+    )
+    assert temp_leftovers == []
+    assert backup_leftovers == []
+
+
 def test_safe_workbook_closes_on_success(tmp_workbook):
     """Workbook should be closed after successful context manager exit."""
     with safe_workbook(tmp_workbook) as wb:
@@ -53,9 +66,7 @@ def test_safe_workbook_atomic_save_leaves_no_temp_artifacts(tmp_workbook):
     with safe_workbook(tmp_workbook, save=True) as wb:
         wb["Sheet1"]["D1"] = "NewColumn"
 
-    leftovers = list(workbook_path.parent.glob(f".{workbook_path.name}.sheetforge-*.tmp"))
-
-    assert leftovers == []
+    _assert_no_sheetforge_artifacts(workbook_path)
 
 
 def test_safe_workbook_raises_workbook_error_on_post_save_verify_failure(tmp_workbook, monkeypatch):
@@ -69,10 +80,7 @@ def test_safe_workbook_raises_workbook_error_on_post_save_verify_failure(tmp_wor
             wb["Sheet1"]["D1"] = "NewColumn"
 
     workbook_path = Path(tmp_workbook)
-    leftovers = list(workbook_path.parent.glob(f".{workbook_path.name}.sheetforge-*.tmp"))
-    assert leftovers == []
-    backup_leftovers = list(workbook_path.parent.glob(f".{workbook_path.name}.sheetforge-backup-*.bak"))
-    assert backup_leftovers == []
+    _assert_no_sheetforge_artifacts(workbook_path)
 
     with safe_workbook(tmp_workbook) as wb:
         assert wb["Sheet1"]["D1"].value is None

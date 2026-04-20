@@ -166,6 +166,7 @@ Returns matches under `data.matches`:
 ## Workbook And Overview Tools
 
 - `create_workbook(filepath: str) -> str`
+  Creates a new workbook at `filepath`. Fails if the destination file already exists.
   Creates a new workbook file on disk.
 - `create_worksheet(filepath: str, sheet_name: str) -> str`
   Adds a worksheet to an existing workbook.

@@ -8,6 +8,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.workbook.defined_name import DefinedName
 from excel_mcp.chart import create_chart_in_sheet
+from excel_mcp.exceptions import WorkbookError
 from excel_mcp.pivot import create_pivot_table
 from excel_mcp.sheet import copy_sheet, rename_sheet
 from excel_mcp.server import (
@@ -33,6 +34,7 @@ from excel_mcp.workbook import (
     apply_workbook_repairs,
     analyze_range_impact,
     audit_workbook,
+    create_workbook,
     create_named_range,
     delete_named_range,
     diff_workbooks,
@@ -71,6 +73,24 @@ def test_get_or_create_loads_existing_file(tmp_workbook):
     wb = get_or_create_workbook(tmp_workbook)
     assert "Sheet1" in wb.sheetnames
     wb.close()
+
+
+def test_create_workbook_rejects_existing_file_without_overwriting(tmp_path):
+    filepath = tmp_path / "existing.xlsx"
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet["A1"] = "KEEP"
+    workbook.save(filepath)
+    workbook.close()
+
+    with pytest.raises(WorkbookError, match="Workbook already exists"):
+        create_workbook(str(filepath))
+
+    reopened = load_workbook(filepath)
+    try:
+        assert reopened.active["A1"].value == "KEEP"
+    finally:
+        reopened.close()
 
 def test_list_sheets_returns_names(multi_sheet_workbook):
     result = list_sheets(multi_sheet_workbook)

@@ -16,6 +16,7 @@ Repository docs track the current main-branch tool surface, which currently expo
 ## Why SheetForge
 
 - agent-friendly reads via `suggest_read_strategy`, `describe_dataset`, `query_table`, and `aggregate_table`
+- safer workbook creation: `create_workbook` now refuses to overwrite an existing `.xlsx`
 - smarter worksheet boundaries so compact readers stop at the main contiguous data block and surface trailing-row hints instead of over-reading sparse footer noise
 - workbook and layout awareness via `profile_workbook`, `describe_sheet_layout`, `list_tables`, `list_charts`, and `analyze_range_impact`
 - safer local mutation through `dry_run`, compact write responses, guarded native-table append/upsert flows, and workbook diff/audit/repair loops
