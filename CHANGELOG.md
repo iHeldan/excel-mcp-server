@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.0 - 2026-04-20
+
 ### Added
 
 - Added `create_named_range` so agents can create workbook-level or sheet-scoped named ranges with `dry_run` previews and same-scope `replace=True` support instead of dropping to ad hoc Python for a common workbook-structure task.
@@ -15,14 +17,17 @@
 - Changed `create_pivot_table` so it now protects an existing generated pivot sheet by default instead of deleting any same-named worksheet silently; callers must pass `replace_existing=True` to intentionally overwrite `<sheet_name>_pivot`.
 - Changed workbook persistence through `safe_workbook(..., save=True)` to use temp-file save, `fsync`, atomic replace, and reopen verification instead of writing directly over the original path.
 - Changed `insert_rows`, `insert_columns`, `delete_sheet_rows`, and `delete_sheet_columns` so structural worksheet edits now carry workbook formulas, named ranges, chart references, validation rules, conditional-format ranges, merged cells, and chart anchors forward with the shift instead of leaving stale coordinates behind.
+- Changed `audit_workbook` so dominant native-table sheets are judged by the table's own headers when nearby dashboard artifacts extend the used range, reducing false `blank_headers` or `duplicate_headers` findings on mixed sheets.
+- Refreshed README, package metadata, manifest copy, and landing-page positioning to better highlight SheetForge's current local-first, agent-friendly workbook reading, introspection, and safer mutation strengths without promising unreleased concurrency features.
+
+### Fixed
+
 - Fixed structured-write `dry_run` previews so simulated `new_*_token` values no longer reuse live-file `snapshot_metadata`; previews now report `token_basis="dry_run_preview"` with `source_file_*` metadata instead.
 - Fixed the atomic save path so a post-replace verify failure rolls back to the original workbook when possible instead of raising after the destination file has already been irreversibly changed.
 - Fixed `create_workbook` so it now refuses to overwrite an existing workbook and uses the durable atomic-save path for fresh workbook creation.
 - Fixed `delete_worksheet` to fail early with a clear error when deleting the target would leave the workbook without any visible sheet.
 - Fixed `delete_range` so moved relative formulas now translate with the shifted cells instead of keeping stale references after upward or leftward cell deletions.
 - Fixed `copy_worksheet` so embedded charts are now duplicated onto the copied sheet with their series references rewritten to the new worksheet instead of disappearing from the copy.
-- Changed `audit_workbook` so dominant native-table sheets are judged by the table's own headers when nearby dashboard artifacts extend the used range, reducing false `blank_headers` or `duplicate_headers` findings on mixed sheets.
-- Refreshed README, package metadata, manifest copy, and landing-page positioning to better highlight SheetForge's current local-first, agent-friendly workbook reading, introspection, and safer mutation strengths without promising unreleased concurrency features.
 
 ## 0.7.0 - 2026-04-19
 
