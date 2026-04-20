@@ -1345,7 +1345,8 @@ def create_pivot_table(
     rows: List[str],
     values: List[str],
     columns: Optional[List[str]] = None,
-    agg_func: str = "sum"
+    agg_func: str = "sum",
+    replace_existing: bool = False,
 ) -> str:
     """Create pivot table in worksheet."""
     return _run_tool(
@@ -1357,7 +1358,8 @@ def create_pivot_table(
             rows=rows,
             values=values,
             columns=columns or [],
-            agg_func=agg_func
+            agg_func=agg_func,
+            replace_existing=replace_existing,
         ),
     )
 

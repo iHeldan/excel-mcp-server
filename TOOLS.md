@@ -349,8 +349,8 @@ Returns matches under `data.matches`:
   Creates a chart from explicit series definitions, including non-contiguous ranges. Non-scatter series use `values_range` per series plus an optional shared `categories_range`; scatter series use `x_range` and `y_range`. `width` and `height` are measured in centimeters; defaults are `15` and `7.5`. You can omit `target_cell` if `placement` is provided, including the `placement.relative_to="free_canvas"` layout scan.
 - `placement`
   Placement objects support `direction` (`right` or `below`), optional `padding_columns` / `padding_rows`, and `relative_to` values of `content`, `used_range`, `data_range`, `free_canvas`, `table:<name>`, or a worksheet range like `A1:C10`. `free_canvas` also accepts `origin_cell`, `search_rows`, and `search_columns`.
-- `create_pivot_table(filepath: str, sheet_name: str, data_range: str, rows: List[str], values: List[str], columns: Optional[List[str]] = None, agg_func: str = "sum") -> str`
-  Creates a pivot-style summary from the given data range. Supported aggregation functions: `sum`, `average`, `count`, `min`, `max`.
+- `create_pivot_table(filepath: str, sheet_name: str, data_range: str, rows: List[str], values: List[str], columns: Optional[List[str]] = None, agg_func: str = "sum", replace_existing: bool = False) -> str`
+  Creates a pivot-style summary from the given data range. Supported aggregation functions: `sum`, `average`, `count`, `min`, `max`. By default SheetForge now protects any existing `<sheet_name>_pivot` worksheet instead of deleting it implicitly; pass `replace_existing=True` only when you intentionally want to overwrite that generated pivot sheet.
 
 ## Practical Usage Notes
 

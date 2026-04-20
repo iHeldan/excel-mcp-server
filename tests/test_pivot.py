@@ -140,13 +140,64 @@ def test_pivot_count_aggregation_supports_text_fields(pivot_workbook):
     wb.close()
 
 
-def test_pivot_replaces_existing_pivot_sheet(pivot_workbook):
+def test_pivot_requires_opt_in_to_replace_existing_pivot_sheet(pivot_workbook):
     create_pivot_table(pivot_workbook, "Data", "A1:D6", rows=["Region"], values=["Sales"])
-    # Run again — should replace, not fail
+
+    with pytest.raises(PivotError, match="Pass replace_existing=True to overwrite it"):
+        create_pivot_table(
+            pivot_workbook, "Data", "A1:D6", rows=["Region"], values=["Sales"], agg_func="max"
+        )
+
+
+def test_pivot_replaces_existing_pivot_sheet_with_opt_in(pivot_workbook):
+    create_pivot_table(pivot_workbook, "Data", "A1:D6", rows=["Region"], values=["Sales"])
+
     result = create_pivot_table(
-        pivot_workbook, "Data", "A1:D6", rows=["Region"], values=["Sales"], agg_func="max"
+        pivot_workbook,
+        "Data",
+        "A1:D6",
+        rows=["Region"],
+        values=["Sales"],
+        agg_func="max",
+        replace_existing=True,
     )
+
     assert result["details"]["aggregation"] == "max"
+    assert result["details"]["replaced_existing_sheet"] is True
+
+
+def test_pivot_does_not_silently_delete_user_sheet_named_like_generated_pivot(tmp_path):
+    from openpyxl import Workbook
+
+    filepath = str(tmp_path / "pivot-existing-user-sheet.xlsx")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    for row in [
+        ("Region", "Sales"),
+        ("North", 10),
+        ("South", 20),
+    ]:
+        ws.append(row)
+    notes_ws = wb.create_sheet("Data_pivot")
+    notes_ws["A1"] = "KEEP ME"
+    wb.save(filepath)
+    wb.close()
+
+    with pytest.raises(PivotError, match="Pass replace_existing=True to overwrite it"):
+        create_pivot_table(
+            filepath,
+            "Data",
+            "A1:B3",
+            rows=["Region"],
+            values=["Sales"],
+        )
+
+    reopened = load_workbook(filepath)
+    try:
+        assert reopened["Data_pivot"]["A1"].value == "KEEP ME"
+    finally:
+        reopened.close()
 
 
 def test_pivot_resolves_case_insensitive_field_names(pivot_workbook):

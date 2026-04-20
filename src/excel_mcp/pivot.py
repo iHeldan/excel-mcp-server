@@ -99,7 +99,8 @@ def create_pivot_table(
     rows: list[str],
     values: list[str],
     columns: list[str] | None = None,
-    agg_func: str = "sum"
+    agg_func: str = "sum",
+    replace_existing: bool = False,
 ) -> dict[str, Any]:
     """Create pivot table in sheet using Excel table functionality
     
@@ -148,6 +149,9 @@ def create_pivot_table(
         except Exception as e:
             raise PivotError(f"Failed to read or process source data: {str(e)}")
 
+        if isinstance(replace_existing, bool) is False:
+            raise ValidationError("replace_existing must be a boolean")
+
         # Validate aggregation function
         valid_agg_funcs = ["sum", "average", "count", "min", "max"]
         if agg_func.lower() not in valid_agg_funcs:
@@ -172,8 +176,15 @@ def create_pivot_table(
 
             # Create pivot sheet
             pivot_sheet_name = f"{sheet_name}_pivot"
+            replaced_existing_sheet = False
             if pivot_sheet_name in wb.sheetnames:
+                if not replace_existing:
+                    raise PivotError(
+                        f"Target pivot sheet '{pivot_sheet_name}' already exists. "
+                        "Pass replace_existing=True to overwrite it."
+                    )
                 wb.remove(wb[pivot_sheet_name])
+                replaced_existing_sheet = True
             pivot_ws = wb.create_sheet(pivot_sheet_name)
 
             # Write headers
@@ -265,7 +276,8 @@ def create_pivot_table(
                 "rows": resolved_rows,
                 "columns": resolved_columns,
                 "values": resolved_values,
-                "aggregation": agg_func
+                "aggregation": agg_func,
+                "replaced_existing_sheet": replaced_existing_sheet,
             }
         }
 
