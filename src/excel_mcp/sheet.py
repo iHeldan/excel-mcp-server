@@ -1,9 +1,12 @@
 import logging
+from collections import OrderedDict
 from copy import copy, deepcopy
 import re
 from typing import Any, Dict, Optional
 
+from openpyxl.formula.tokenizer import Tokenizer
 from openpyxl.worksheet.worksheet import Worksheet
+from openpyxl.worksheet.merge import MergedCellRange
 from openpyxl.utils import get_column_letter, column_index_from_string, range_boundaries
 from openpyxl.styles import Font, Border, PatternFill, Side
 from openpyxl.formula.translate import Translator, TranslatorError
@@ -11,6 +14,8 @@ from openpyxl.formula.translate import Translator, TranslatorError
 from .cell_utils import parse_cell_range, validate_cell_reference
 from .exceptions import SheetError, ValidationError
 from .workbook import (
+    _iter_defined_name_entries,
+    _normalize_sheet_reference_name,
     _rewrite_sheet_references_in_text,
     _update_defined_name_sheet_references,
     require_worksheet,
@@ -39,6 +44,12 @@ PROTECTION_OPTION_FIELDS = (
 
 ROW_RANGE_PATTERN = re.compile(r"^\$?(\d+):\$?(\d+)$")
 COLUMN_RANGE_PATTERN = re.compile(r"^\$?([A-Za-z]+):\$?([A-Za-z]+)$")
+CELL_REFERENCE_PATTERN = re.compile(
+    r"^(?P<col_abs>\$?)(?P<col>[A-Za-z]{1,3})(?P<row_abs>\$?)(?P<row>\d+)$"
+)
+ROW_REFERENCE_PATTERN = re.compile(r"^(?P<row_abs>\$?)(?P<row>\d+)$")
+COLUMN_REFERENCE_PATTERN = re.compile(r"^(?P<col_abs>\$?)(?P<col>[A-Za-z]{1,3})$")
+MAX_EXCEL_COLUMN = 16384
 
 
 def _should_include_changes(dry_run: bool, include_changes: Optional[bool]) -> bool:
@@ -225,6 +236,721 @@ def _update_workbook_formula_sheet_references(
                 updated_count += rule_updates
 
     return updated_count
+
+
+def _is_valid_excel_column_index(index: int) -> bool:
+    return 1 <= index <= MAX_EXCEL_COLUMN
+
+
+def _parse_reference_endpoint(
+    endpoint: str,
+    *,
+    allow_row_or_column: bool,
+) -> dict[str, Any] | None:
+    cell_match = CELL_REFERENCE_PATTERN.match(endpoint)
+    if cell_match:
+        column_index = column_index_from_string(cell_match.group("col"))
+        if not _is_valid_excel_column_index(column_index):
+            return None
+        return {
+            "kind": "cell",
+            "column": column_index,
+            "row": int(cell_match.group("row")),
+            "column_abs": bool(cell_match.group("col_abs")),
+            "row_abs": bool(cell_match.group("row_abs")),
+        }
+
+    if not allow_row_or_column:
+        return None
+
+    row_match = ROW_REFERENCE_PATTERN.match(endpoint)
+    if row_match:
+        return {
+            "kind": "row",
+            "row": int(row_match.group("row")),
+            "row_abs": bool(row_match.group("row_abs")),
+        }
+
+    column_match = COLUMN_REFERENCE_PATTERN.match(endpoint)
+    if column_match:
+        column_index = column_index_from_string(column_match.group("col"))
+        if not _is_valid_excel_column_index(column_index):
+            return None
+        return {
+            "kind": "column",
+            "column": column_index,
+            "column_abs": bool(column_match.group("col_abs")),
+        }
+
+    return None
+
+
+def _parse_reference_token(local_reference: str) -> dict[str, Any] | None:
+    if ":" not in local_reference:
+        endpoint = _parse_reference_endpoint(local_reference, allow_row_or_column=False)
+        if endpoint is None:
+            return None
+        return {
+            "kind": endpoint["kind"],
+            "start": endpoint,
+            "end": dict(endpoint),
+            "had_range": False,
+        }
+
+    parts = local_reference.split(":")
+    if len(parts) != 2:
+        return None
+
+    start = _parse_reference_endpoint(parts[0], allow_row_or_column=True)
+    end = _parse_reference_endpoint(parts[1], allow_row_or_column=True)
+    if start is None or end is None or start["kind"] != end["kind"]:
+        return None
+
+    kind = start["kind"]
+    if kind == "cell":
+        if (
+            start["row"] > end["row"]
+            or start["column"] > end["column"]
+        ):
+            return None
+    elif kind == "row":
+        if start["row"] > end["row"]:
+            return None
+    elif kind == "column":
+        if start["column"] > end["column"]:
+            return None
+
+    return {
+        "kind": kind,
+        "start": start,
+        "end": end,
+        "had_range": True,
+    }
+
+
+def _format_reference_endpoint(endpoint: dict[str, Any]) -> str:
+    if endpoint["kind"] == "cell":
+        return (
+            f"{'$' if endpoint['column_abs'] else ''}"
+            f"{get_column_letter(endpoint['column'])}"
+            f"{'$' if endpoint['row_abs'] else ''}"
+            f"{endpoint['row']}"
+        )
+    if endpoint["kind"] == "row":
+        return f"{'$' if endpoint['row_abs'] else ''}{endpoint['row']}"
+    return f"{'$' if endpoint['column_abs'] else ''}{get_column_letter(endpoint['column'])}"
+
+
+def _shift_interval_for_insert(
+    start_value: int,
+    end_value: int,
+    *,
+    start_index: int,
+    count: int,
+) -> tuple[int, int]:
+    shifted_start = start_value + count if start_value >= start_index else start_value
+    shifted_end = end_value + count if end_value >= start_index else end_value
+    return shifted_start, shifted_end
+
+
+def _shift_interval_for_delete(
+    start_value: int,
+    end_value: int,
+    *,
+    start_index: int,
+    count: int,
+) -> tuple[int, int] | None:
+    deleted_end = start_index + count - 1
+
+    if end_value < start_index:
+        return start_value, end_value
+    if start_value > deleted_end:
+        return start_value - count, end_value - count
+
+    surviving_start: int | None
+    if start_value < start_index:
+        surviving_start = start_value
+    elif end_value > deleted_end:
+        surviving_start = deleted_end + 1
+    else:
+        surviving_start = None
+
+    surviving_end: int | None
+    if end_value > deleted_end:
+        surviving_end = end_value
+    elif start_value < start_index:
+        surviving_end = start_index - 1
+    else:
+        surviving_end = None
+
+    if surviving_start is None or surviving_end is None:
+        return None
+
+    def _transform(value: int) -> int:
+        return value - count if value > deleted_end else value
+
+    return _transform(surviving_start), _transform(surviving_end)
+
+
+def _rewrite_local_reference_for_structure_change(
+    local_reference: str,
+    *,
+    operation: str,
+    start_index: int,
+    count: int,
+) -> str:
+    parsed = _parse_reference_token(local_reference)
+    if parsed is None:
+        return local_reference
+
+    kind = parsed["kind"]
+    start_endpoint = dict(parsed["start"])
+    end_endpoint = dict(parsed["end"])
+
+    if operation in {"insert_rows", "delete_rows"}:
+        if kind == "column":
+            return local_reference
+        if operation == "insert_rows":
+            shifted_interval = _shift_interval_for_insert(
+                start_endpoint["row"],
+                end_endpoint["row"],
+                start_index=start_index,
+                count=count,
+            )
+        else:
+            shifted_interval = _shift_interval_for_delete(
+                start_endpoint["row"],
+                end_endpoint["row"],
+                start_index=start_index,
+                count=count,
+            )
+        if shifted_interval is None:
+            return "#REF!"
+        start_endpoint["row"], end_endpoint["row"] = shifted_interval
+    else:
+        if kind == "row":
+            return local_reference
+        if operation == "insert_cols":
+            shifted_interval = _shift_interval_for_insert(
+                start_endpoint["column"],
+                end_endpoint["column"],
+                start_index=start_index,
+                count=count,
+            )
+        else:
+            shifted_interval = _shift_interval_for_delete(
+                start_endpoint["column"],
+                end_endpoint["column"],
+                start_index=start_index,
+                count=count,
+            )
+        if shifted_interval is None:
+            return "#REF!"
+        start_endpoint["column"], end_endpoint["column"] = shifted_interval
+
+    if parsed["had_range"]:
+        return f"{_format_reference_endpoint(start_endpoint)}:{_format_reference_endpoint(end_endpoint)}"
+    return _format_reference_endpoint(start_endpoint)
+
+
+def _rewrite_reference_token_for_structure_change(
+    token_value: Any,
+    *,
+    target_sheet_name: str,
+    formula_sheet_name: str | None,
+    operation: str,
+    start_index: int,
+    count: int,
+) -> Any:
+    if not isinstance(token_value, str):
+        return token_value
+
+    raw_sheet_prefix: str | None = None
+    local_reference = token_value
+    if "!" in token_value:
+        raw_sheet_prefix, local_reference = token_value.rsplit("!", 1)
+        if _normalize_sheet_reference_name(raw_sheet_prefix) != target_sheet_name:
+            return token_value
+    elif formula_sheet_name != target_sheet_name:
+        return token_value
+
+    rewritten_local_reference = _rewrite_local_reference_for_structure_change(
+        local_reference,
+        operation=operation,
+        start_index=start_index,
+        count=count,
+    )
+    if rewritten_local_reference == local_reference:
+        return token_value
+    if raw_sheet_prefix is None:
+        return rewritten_local_reference
+    if rewritten_local_reference == "#REF!":
+        return f"{raw_sheet_prefix}!#REF!"
+    return f"{raw_sheet_prefix}!{rewritten_local_reference}"
+
+
+def _rewrite_formula_like_text_for_structure_change(
+    text: Any,
+    *,
+    target_sheet_name: str,
+    formula_sheet_name: str | None,
+    operation: str,
+    start_index: int,
+    count: int,
+) -> Any:
+    if not isinstance(text, str) or not text.strip():
+        return text
+
+    had_equals_prefix = text.startswith("=")
+    normalized_formula = text if had_equals_prefix else f"={text}"
+
+    try:
+        tokenizer = Tokenizer(normalized_formula)
+    except Exception:
+        return text
+
+    rewritten_tokens: list[str] = []
+    changed = False
+    for token in tokenizer.items:
+        rewritten_value = token.value
+        if token.type == "OPERAND" and token.subtype == "RANGE":
+            rewritten_value = _rewrite_reference_token_for_structure_change(
+                token.value,
+                target_sheet_name=target_sheet_name,
+                formula_sheet_name=formula_sheet_name,
+                operation=operation,
+                start_index=start_index,
+                count=count,
+            )
+        rewritten_tokens.append(rewritten_value)
+        if rewritten_value != token.value:
+            changed = True
+
+    if not changed:
+        return text
+
+    rewritten_formula = f"={''.join(rewritten_tokens)}"
+    if had_equals_prefix:
+        return rewritten_formula
+    return rewritten_formula[1:]
+
+
+def _update_formula_container_structure_references(
+    container: Any,
+    *,
+    target_sheet_name: str,
+    formula_sheet_name: str | None,
+    operation: str,
+    start_index: int,
+    count: int,
+) -> int:
+    if container is None:
+        return 0
+
+    updated_count = 0
+    for attr_name in ("numRef", "strRef", "multiLvlStrRef"):
+        reference = getattr(container, attr_name, None)
+        formula = getattr(reference, "f", None)
+        updated_formula = _rewrite_formula_like_text_for_structure_change(
+            formula,
+            target_sheet_name=target_sheet_name,
+            formula_sheet_name=formula_sheet_name,
+            operation=operation,
+            start_index=start_index,
+            count=count,
+        )
+        if updated_formula == formula:
+            continue
+        reference.f = updated_formula
+        updated_count += 1
+
+    return updated_count
+
+
+def _update_chart_structure_references(
+    chart: Any,
+    *,
+    target_sheet_name: str,
+    formula_sheet_name: str | None,
+    operation: str,
+    start_index: int,
+    count: int,
+) -> int:
+    updated_count = 0
+
+    title = getattr(chart, "title", None)
+    updated_count += _update_formula_container_structure_references(
+        getattr(title, "tx", None),
+        target_sheet_name=target_sheet_name,
+        formula_sheet_name=formula_sheet_name,
+        operation=operation,
+        start_index=start_index,
+        count=count,
+    )
+
+    series_items = getattr(chart, "ser", None) or list(getattr(chart, "series", []))
+    for series in series_items:
+        updated_count += _update_formula_container_structure_references(
+            getattr(series, "tx", None),
+            target_sheet_name=target_sheet_name,
+            formula_sheet_name=formula_sheet_name,
+            operation=operation,
+            start_index=start_index,
+            count=count,
+        )
+        for attr_name in ("cat", "val", "xVal", "yVal"):
+            updated_count += _update_formula_container_structure_references(
+                getattr(series, attr_name, None),
+                target_sheet_name=target_sheet_name,
+                formula_sheet_name=formula_sheet_name,
+                operation=operation,
+                start_index=start_index,
+                count=count,
+            )
+
+    return updated_count
+
+
+def _format_bounds_as_range(
+    min_col: int,
+    min_row: int,
+    max_col: int,
+    max_row: int,
+) -> str:
+    start = f"{get_column_letter(min_col)}{min_row}"
+    end = f"{get_column_letter(max_col)}{max_row}"
+    if start == end:
+        return start
+    return f"{start}:{end}"
+
+
+def _shift_cell_range_bounds(
+    *,
+    min_col: int,
+    min_row: int,
+    max_col: int,
+    max_row: int,
+    operation: str,
+    start_index: int,
+    count: int,
+) -> tuple[int, int, int, int] | None:
+    if operation in {"insert_rows", "delete_rows"}:
+        shift_rows = (
+            _shift_interval_for_insert
+            if operation == "insert_rows"
+            else _shift_interval_for_delete
+        )(
+            min_row,
+            max_row,
+            start_index=start_index,
+            count=count,
+        )
+        if shift_rows is None:
+            return None
+        return min_col, shift_rows[0], max_col, shift_rows[1]
+
+    shift_cols = (
+        _shift_interval_for_insert
+        if operation == "insert_cols"
+        else _shift_interval_for_delete
+    )(
+        min_col,
+        max_col,
+        start_index=start_index,
+        count=count,
+    )
+    if shift_cols is None:
+        return None
+    return shift_cols[0], min_row, shift_cols[1], max_row
+
+
+def _shift_multi_range_strings(
+    ranges: Any,
+    *,
+    operation: str,
+    start_index: int,
+    count: int,
+) -> list[str]:
+    shifted_ranges: list[str] = []
+    for cell_range in ranges:
+        shifted_bounds = _shift_cell_range_bounds(
+            min_col=cell_range.min_col,
+            min_row=cell_range.min_row,
+            max_col=cell_range.max_col,
+            max_row=cell_range.max_row,
+            operation=operation,
+            start_index=start_index,
+            count=count,
+        )
+        if shifted_bounds is None:
+            continue
+        shifted_ranges.append(_format_bounds_as_range(*shifted_bounds))
+    return shifted_ranges
+
+
+def _shift_chart_anchor_index(
+    value: int,
+    *,
+    operation: str,
+    start_index: int,
+    count: int,
+) -> int:
+    if operation in {"insert_rows", "insert_cols"}:
+        return value + count if value >= start_index else value
+
+    deleted_end = start_index + count - 1
+    if value < start_index:
+        return value
+    if value > deleted_end:
+        return value - count
+    return start_index
+
+
+def _update_worksheet_chart_anchors(
+    worksheet: Worksheet,
+    *,
+    operation: str,
+    start_index: int,
+    count: int,
+) -> int:
+    updated_count = 0
+    for chart in getattr(worksheet, "_charts", []):
+        anchor = getattr(chart, "anchor", None)
+        markers = [
+            getattr(anchor, "_from", None),
+            getattr(anchor, "to", None),
+            getattr(anchor, "_to", None),
+        ]
+        chart_updated = False
+        for marker in markers:
+            if marker is None:
+                continue
+            if operation in {"insert_rows", "delete_rows"}:
+                current_value = marker.row + 1
+                updated_value = _shift_chart_anchor_index(
+                    current_value,
+                    operation=operation,
+                    start_index=start_index,
+                    count=count,
+                )
+                if updated_value != current_value:
+                    marker.row = updated_value - 1
+                    chart_updated = True
+            else:
+                current_value = marker.col + 1
+                updated_value = _shift_chart_anchor_index(
+                    current_value,
+                    operation=operation,
+                    start_index=start_index,
+                    count=count,
+                )
+                if updated_value != current_value:
+                    marker.col = updated_value - 1
+                    chart_updated = True
+        if chart_updated:
+            updated_count += 1
+    return updated_count
+
+
+def _update_worksheet_structural_ranges(
+    worksheet: Worksheet,
+    *,
+    operation: str,
+    start_index: int,
+    count: int,
+) -> dict[str, int]:
+    updated_counts = {
+        "validation_range_updates": 0,
+        "conditional_format_range_updates": 0,
+        "merged_range_updates": 0,
+        "chart_anchor_updates": 0,
+    }
+
+    updated_validations = []
+    for validation in getattr(getattr(worksheet, "data_validations", None), "dataValidation", []):
+        shifted_ranges = _shift_multi_range_strings(
+            getattr(validation.sqref, "ranges", []),
+            operation=operation,
+            start_index=start_index,
+            count=count,
+        )
+        if not shifted_ranges:
+            continue
+        shifted_sqref = " ".join(shifted_ranges)
+        if shifted_sqref != str(validation.sqref):
+            validation.sqref = shifted_sqref
+            updated_counts["validation_range_updates"] += 1
+        updated_validations.append(validation)
+    worksheet.data_validations.dataValidation = updated_validations
+
+    rebuilt_cf_rules: OrderedDict[Any, list[Any]] = OrderedDict()
+    for conditional_format, format_rules in getattr(worksheet.conditional_formatting, "_cf_rules", {}).items():
+        shifted_ranges = _shift_multi_range_strings(
+            getattr(conditional_format.sqref, "ranges", []),
+            operation=operation,
+            start_index=start_index,
+            count=count,
+        )
+        if not shifted_ranges:
+            continue
+        shifted_sqref = " ".join(shifted_ranges)
+        if shifted_sqref != str(conditional_format.sqref):
+            conditional_format.sqref = shifted_sqref
+            updated_counts["conditional_format_range_updates"] += 1
+        rebuilt_cf_rules[conditional_format] = format_rules
+    worksheet.conditional_formatting._cf_rules = rebuilt_cf_rules
+
+    original_merged_ranges = [str(cell_range) for cell_range in worksheet.merged_cells.ranges]
+    shifted_merged_ranges = _shift_multi_range_strings(
+        worksheet.merged_cells.ranges,
+        operation=operation,
+        start_index=start_index,
+        count=count,
+    )
+    if shifted_merged_ranges != original_merged_ranges:
+        rebuilt_merged_ranges: set[MergedCellRange] = set()
+        for merged_range in shifted_merged_ranges:
+            bounds = range_boundaries(merged_range)
+            if bounds[0] == bounds[2] and bounds[1] == bounds[3]:
+                continue
+            rebuilt_merged_ranges.add(MergedCellRange(worksheet, merged_range))
+        worksheet.merged_cells.ranges = rebuilt_merged_ranges
+        updated_counts["merged_range_updates"] = 1
+
+    updated_counts["chart_anchor_updates"] = _update_worksheet_chart_anchors(
+        worksheet,
+        operation=operation,
+        start_index=start_index,
+        count=count,
+    )
+
+    return updated_counts
+
+
+def _update_workbook_structure_references(
+    workbook: Any,
+    *,
+    target_sheet_name: str,
+    operation: str,
+    start_index: int,
+    count: int,
+) -> dict[str, int]:
+    updated_counts = {
+        "formula_updates": 0,
+        "validation_formula_updates": 0,
+        "conditional_format_formula_updates": 0,
+        "chart_reference_updates": 0,
+        "defined_name_updates": 0,
+        "validation_range_updates": 0,
+        "conditional_format_range_updates": 0,
+        "merged_range_updates": 0,
+        "chart_anchor_updates": 0,
+    }
+
+    for worksheet in getattr(workbook, "worksheets", []):
+        for row in worksheet.iter_rows():
+            for cell in row:
+                if not isinstance(cell.value, str) or not cell.value.startswith("="):
+                    continue
+                updated_value = _rewrite_formula_like_text_for_structure_change(
+                    cell.value,
+                    target_sheet_name=target_sheet_name,
+                    formula_sheet_name=worksheet.title,
+                    operation=operation,
+                    start_index=start_index,
+                    count=count,
+                )
+                if updated_value == cell.value:
+                    continue
+                cell.value = updated_value
+                updated_counts["formula_updates"] += 1
+
+        for validation in getattr(getattr(worksheet, "data_validations", None), "dataValidation", []):
+            for attr_name in ("formula1", "formula2"):
+                formula = getattr(validation, attr_name, None)
+                updated_formula = _rewrite_formula_like_text_for_structure_change(
+                    formula,
+                    target_sheet_name=target_sheet_name,
+                    formula_sheet_name=worksheet.title,
+                    operation=operation,
+                    start_index=start_index,
+                    count=count,
+                )
+                if updated_formula == formula:
+                    continue
+                setattr(validation, attr_name, updated_formula)
+                updated_counts["validation_formula_updates"] += 1
+
+        for format_rules in getattr(worksheet.conditional_formatting, "_cf_rules", {}).values():
+            for rule in format_rules:
+                formulas = list(getattr(rule, "formula", None) or [])
+                if not formulas:
+                    continue
+                updated_formulas: list[Any] = []
+                rule_updates = 0
+                for formula in formulas:
+                    updated_formula = _rewrite_formula_like_text_for_structure_change(
+                        formula,
+                        target_sheet_name=target_sheet_name,
+                        formula_sheet_name=worksheet.title,
+                        operation=operation,
+                        start_index=start_index,
+                        count=count,
+                    )
+                    updated_formulas.append(updated_formula)
+                    if updated_formula != formula:
+                        rule_updates += 1
+                if rule_updates == 0:
+                    continue
+                rule.formula = updated_formulas
+                updated_counts["conditional_format_formula_updates"] += rule_updates
+
+    seen_defined_name_ids: set[int] = set()
+    for _, defined_name, scope_sheet_name in _iter_defined_name_entries(workbook):
+        defined_name_id = id(defined_name)
+        if defined_name_id in seen_defined_name_ids:
+            continue
+        seen_defined_name_ids.add(defined_name_id)
+
+        original_text = getattr(defined_name, "attr_text", None)
+        if original_text is None:
+            original_text = str(getattr(defined_name, "value", "") or "")
+
+        updated_text = _rewrite_formula_like_text_for_structure_change(
+            original_text,
+            target_sheet_name=target_sheet_name,
+            formula_sheet_name=scope_sheet_name,
+            operation=operation,
+            start_index=start_index,
+            count=count,
+        )
+        if updated_text == original_text:
+            continue
+        defined_name.attr_text = updated_text
+        updated_counts["defined_name_updates"] += 1
+
+    for sheet in getattr(workbook, "_sheets", []):
+        sheet_name = getattr(sheet, "title", None)
+        for chart in getattr(sheet, "_charts", []):
+            updated_counts["chart_reference_updates"] += _update_chart_structure_references(
+                chart,
+                target_sheet_name=target_sheet_name,
+                formula_sheet_name=sheet_name,
+                operation=operation,
+                start_index=start_index,
+                count=count,
+            )
+
+    target_worksheet = workbook[target_sheet_name]
+    range_updates = _update_worksheet_structural_ranges(
+        target_worksheet,
+        operation=operation,
+        start_index=start_index,
+        count=count,
+    )
+    updated_counts.update(range_updates)
+
+    return updated_counts
 
 
 def _rename_generated_pivot_sheet(
@@ -1691,6 +2417,13 @@ def insert_row(
                 impacts=_table_row_operation_impacts(worksheet, start_row=start_row),
             )
             worksheet.insert_rows(start_row, count)
+            reference_updates = _update_workbook_structure_references(
+                wb,
+                target_sheet_name=sheet_name,
+                operation="insert_rows",
+                start_index=start_row,
+                count=count,
+            )
 
         return {
             "message": f"{'Previewed' if dry_run else 'Inserted'} {count} row(s) starting at row {start_row} in sheet '{sheet_name}'",
@@ -1698,6 +2431,7 @@ def insert_row(
             "start_row": start_row,
             "count": count,
             "dry_run": dry_run,
+            "reference_updates": reference_updates,
             "changes": [{
                 "type": "insert_rows",
                 "sheet_name": sheet_name,
@@ -1738,6 +2472,13 @@ def insert_cols(
                 impacts=_table_column_operation_impacts(worksheet, start_col=start_col),
             )
             worksheet.insert_cols(start_col, count)
+            reference_updates = _update_workbook_structure_references(
+                wb,
+                target_sheet_name=sheet_name,
+                operation="insert_cols",
+                start_index=start_col,
+                count=count,
+            )
 
         return {
             "message": f"{'Previewed' if dry_run else 'Inserted'} {count} column(s) starting at column {start_col} in sheet '{sheet_name}'",
@@ -1745,6 +2486,7 @@ def insert_cols(
             "start_col": start_col,
             "count": count,
             "dry_run": dry_run,
+            "reference_updates": reference_updates,
             "changes": [{
                 "type": "insert_columns",
                 "sheet_name": sheet_name,
@@ -1787,6 +2529,13 @@ def delete_rows(
                 impacts=_table_row_operation_impacts(worksheet, start_row=start_row),
             )
             worksheet.delete_rows(start_row, count)
+            reference_updates = _update_workbook_structure_references(
+                wb,
+                target_sheet_name=sheet_name,
+                operation="delete_rows",
+                start_index=start_row,
+                count=count,
+            )
 
         return {
             "message": f"{'Previewed' if dry_run else 'Deleted'} {count} row(s) starting at row {start_row} in sheet '{sheet_name}'",
@@ -1794,6 +2543,7 @@ def delete_rows(
             "start_row": start_row,
             "count": count,
             "dry_run": dry_run,
+            "reference_updates": reference_updates,
             "changes": [{
                 "type": "delete_rows",
                 "sheet_name": sheet_name,
@@ -1836,6 +2586,13 @@ def delete_cols(
                 impacts=_table_column_operation_impacts(worksheet, start_col=start_col),
             )
             worksheet.delete_cols(start_col, count)
+            reference_updates = _update_workbook_structure_references(
+                wb,
+                target_sheet_name=sheet_name,
+                operation="delete_cols",
+                start_index=start_col,
+                count=count,
+            )
 
         return {
             "message": f"{'Previewed' if dry_run else 'Deleted'} {count} column(s) starting at column {start_col} in sheet '{sheet_name}'",
@@ -1843,6 +2600,7 @@ def delete_cols(
             "start_col": start_col,
             "count": count,
             "dry_run": dry_run,
+            "reference_updates": reference_updates,
             "changes": [{
                 "type": "delete_columns",
                 "sheet_name": sheet_name,

@@ -3,6 +3,8 @@ import json
 import pytest
 from openpyxl import Workbook, load_workbook
 from openpyxl.chart import BarChart, Reference
+from openpyxl.formatting.rule import FormulaRule
+from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.workbook.defined_name import DefinedName
 
 from excel_mcp.server import freeze_panes as freeze_panes_tool
@@ -752,6 +754,124 @@ def test_insert_row_below_native_table_still_succeeds(table_guard_workbook):
     ws = wb["Data"]
     assert ws.tables["DataTable"].ref == "A1:B3"
     assert ws["A4"].value == "outside"
+    wb.close()
+
+
+def test_insert_row_rewrites_workbook_references_and_ranges(tmp_path):
+    filepath = tmp_path / "insert-row-structure.xlsx"
+    wb = Workbook()
+    data = wb.active
+    data.title = "Data"
+    data["A1"] = 10
+    data["A2"] = "=A1"
+    data["B1"] = "=A2"
+    data["E1"] = "x"
+    data["E2"] = "y"
+
+    validation = DataValidation(type="whole", operator="between", formula1="A1", formula2="A2")
+    data.add_data_validation(validation)
+    validation.add("E1:E2")
+    data.conditional_formatting.add("F1:F2", FormulaRule(formula=["A1>0"]))
+    data.merge_cells("C3:D4")
+
+    chart = BarChart()
+    chart.add_data(Reference(data, min_col=1, min_row=1, max_row=2), titles_from_data=False)
+    data.add_chart(chart, "G1")
+
+    summary = wb.create_sheet("Summary")
+    summary["A1"] = "=Data!A2"
+    wb.defined_names["GlobalRange"] = DefinedName("GlobalRange", attr_text="Data!$A$1:$A$2")
+    wb.save(filepath)
+    wb.close()
+
+    result = insert_row(str(filepath), "Data", 1)
+
+    assert result["reference_updates"]["formula_updates"] >= 3
+    assert result["reference_updates"]["chart_reference_updates"] >= 1
+    assert result["reference_updates"]["defined_name_updates"] >= 1
+
+    wb = load_workbook(filepath)
+    data = wb["Data"]
+    summary = wb["Summary"]
+
+    assert data["A3"].value == "=A2"
+    assert data["B2"].value == "=A3"
+    assert summary["A1"].value == "=Data!A3"
+
+    validation = data.data_validations.dataValidation[0]
+    assert str(validation.sqref) == "E2:E3"
+    assert validation.formula1 == "A2"
+    assert validation.formula2 == "A3"
+
+    conditional_format = next(iter(data.conditional_formatting._cf_rules.keys()))
+    assert str(conditional_format.sqref) == "F2:F3"
+    assert data.conditional_formatting._cf_rules[conditional_format][0].formula == ["A2>0"]
+
+    assert [str(cell_range) for cell_range in data.merged_cells.ranges] == ["C4:D5"]
+    assert wb.defined_names["GlobalRange"].attr_text == "Data!$A$2:$A$3"
+
+    created_chart = data._charts[0]
+    assert created_chart.ser[0].val.numRef.f == "'Data'!$A$2:$A$3"
+    assert created_chart.anchor._from.col == 6
+    assert created_chart.anchor._from.row == 1
+    wb.close()
+
+
+def test_delete_column_rewrites_workbook_references_and_ranges(tmp_path):
+    filepath = tmp_path / "delete-column-structure.xlsx"
+    wb = Workbook()
+    data = wb.active
+    data.title = "Data"
+    data["A1"] = 10
+    data["B1"] = "=A1"
+    data["D1"] = "x"
+    data["E1"] = "y"
+
+    validation = DataValidation(type="whole", operator="between", formula1="A1", formula2="B1")
+    data.add_data_validation(validation)
+    validation.add("D1:E1")
+    data.conditional_formatting.add("F1:G1", FormulaRule(formula=["B1>0"]))
+    data.merge_cells("C2:D3")
+
+    chart = BarChart()
+    chart.add_data(Reference(data, min_col=1, min_row=1, max_col=2, max_row=1), titles_from_data=False)
+    data.add_chart(chart, "H1")
+
+    summary = wb.create_sheet("Summary")
+    summary["A1"] = "=Data!B1"
+    wb.defined_names["GlobalRange"] = DefinedName("GlobalRange", attr_text="Data!$A$1:$B$1")
+    wb.save(filepath)
+    wb.close()
+
+    result = delete_cols(str(filepath), "Data", 1)
+
+    assert result["reference_updates"]["formula_updates"] >= 2
+    assert result["reference_updates"]["chart_reference_updates"] >= 1
+    assert result["reference_updates"]["defined_name_updates"] >= 1
+
+    wb = load_workbook(filepath)
+    data = wb["Data"]
+    summary = wb["Summary"]
+
+    assert data["A1"].value == "=#REF!"
+    assert summary["A1"].value == "=Data!A1"
+
+    validation = data.data_validations.dataValidation[0]
+    assert str(validation.sqref) == "C1:D1"
+    assert validation.formula1 == "#REF!"
+    assert validation.formula2 == "A1"
+
+    conditional_format = next(iter(data.conditional_formatting._cf_rules.keys()))
+    assert str(conditional_format.sqref) == "E1:F1"
+    assert data.conditional_formatting._cf_rules[conditional_format][0].formula == ["A1>0"]
+
+    assert [str(cell_range) for cell_range in data.merged_cells.ranges] == ["B2:C3"]
+    assert wb.defined_names["GlobalRange"].attr_text == "Data!$A$1:$A$1"
+
+    created_chart = data._charts[0]
+    assert created_chart.ser[0].val.numRef.f == "'Data'!#REF!"
+    assert created_chart.anchor._from.col == 6
+    assert created_chart.anchor._from.row == 0
     wb.close()
 
 

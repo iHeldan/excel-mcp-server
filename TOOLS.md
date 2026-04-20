@@ -327,13 +327,13 @@ Returns matches under `data.matches`:
 - `delete_range(filepath: str, sheet_name: str, start_cell: str, end_cell: str, shift_direction: str = "up", dry_run: bool = False) -> str`
   Deletes a range and shifts remaining cells up or left. Supports preview mode.
 - `insert_rows(filepath: str, sheet_name: str, start_row: int, count: int = 1, dry_run: bool = False) -> str`
-  Inserts one or more rows and supports preview mode.
+  Inserts one or more rows, supports preview mode, and keeps workbook formulas, named ranges, chart series, validations, conditional formatting, and merged ranges aligned with the structural shift.
 - `insert_columns(filepath: str, sheet_name: str, start_col: int, count: int = 1, dry_run: bool = False) -> str`
-  Inserts one or more columns and supports preview mode.
+  Inserts one or more columns, supports preview mode, and keeps workbook formulas, named ranges, chart series, validations, conditional formatting, and merged ranges aligned with the structural shift.
 - `delete_sheet_rows(filepath: str, sheet_name: str, start_row: int, count: int = 1, dry_run: bool = False) -> str`
-  Deletes one or more rows and supports preview mode.
+  Deletes one or more rows, supports preview mode, and rewrites dependent workbook references instead of leaving stale formulas or range metadata behind.
 - `delete_sheet_columns(filepath: str, sheet_name: str, start_col: int, count: int = 1, dry_run: bool = False) -> str`
-  Deletes one or more columns and supports preview mode.
+  Deletes one or more columns, supports preview mode, and rewrites dependent workbook references instead of leaving stale formulas or range metadata behind.
 
 ## Table, Chart, And Pivot Tools
 
