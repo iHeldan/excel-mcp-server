@@ -1,13 +1,25 @@
 # SheetForge MCP
 
-SheetForge MCP is an Excel MCP server for `.xlsx` automation over the Model Context Protocol. It helps AI agents, MCP clients, and automation workflows read, write, search, format, chart, validate, and restructure Excel workbooks with Python and `openpyxl`, without launching Microsoft Excel or LibreOffice.
+> Local-first Excel MCP server for AI agents that need structured reads, workbook introspection, and safer `.xlsx` mutation.
+
+SheetForge MCP is an Excel MCP server for `.xlsx` automation over the Model Context Protocol. It is built for AI agents, MCP clients, and automation workflows that need more than raw cell access: compact structured reads, workbook-aware guidance, layout-aware inspection, and safer write paths with Python and `openpyxl`, without launching Microsoft Excel or LibreOffice.
 
 If you are looking for an Excel MCP server for spreadsheet automation, workbook inspection, Excel report generation, dashboard authoring, or `.xlsx` editing from AI tools, SheetForge MCP is built for that workflow.
+
+Instead of treating every sheet as a blind cell grid, SheetForge helps agents distinguish native Excel tables, worksheet-shaped datasets, layout-heavy dashboards, and chart sheets, then choose the right read or mutation path for each workbook task.
 
 Package name: `sheetforge-mcp`
 CLI command: `sheetforge-mcp`
 Published package release: `0.7.0`
 Repository docs track the current main-branch tool surface, which currently exposes `76` MCP tools.
+
+## Why SheetForge
+
+- agent-friendly reads via `suggest_read_strategy`, `describe_dataset`, `query_table`, and `aggregate_table`
+- smarter worksheet boundaries so compact readers stop at the main contiguous data block and surface trailing-row hints instead of over-reading sparse footer noise
+- workbook and layout awareness via `profile_workbook`, `describe_sheet_layout`, `list_tables`, `list_charts`, and `analyze_range_impact`
+- safer local mutation through `dry_run`, compact write responses, guarded native-table append/upsert flows, and workbook diff/audit/repair loops
+- local-first performance and privacy with `openpyxl`, no desktop Excel dependency, and no cloud-auth requirement
 
 ## Excel MCP Server Features
 

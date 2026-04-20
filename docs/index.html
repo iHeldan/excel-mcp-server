@@ -3,23 +3,23 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SheetForge MCP | Excel MCP Server for .xlsx Automation</title>
-  <meta name="description" content="SheetForge MCP is an Excel MCP server for AI agents, spreadsheet automation, workbook inspection, Excel report generation, and .xlsx dashboard workflows over the Model Context Protocol.">
+  <title>SheetForge MCP | Local-First Excel MCP Server for AI Agents</title>
+  <meta name="description" content="SheetForge MCP is a local-first Excel MCP server for AI agents that need structured reads, workbook introspection, layout-aware inspection, and safer .xlsx automation.">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="SheetForge MCP | Excel MCP Server for .xlsx Automation">
-  <meta name="twitter:description" content="Excel MCP server for AI agents, spreadsheet automation, workbook inspection, and structured .xlsx reporting over the Model Context Protocol.">
+  <meta name="twitter:title" content="SheetForge MCP | Local-First Excel MCP Server for AI Agents">
+  <meta name="twitter:description" content="Local-first Excel MCP server for AI agents with structured reads, workbook introspection, and safer .xlsx automation.">
   <meta name="robots" content="index,follow">
   <link rel="canonical" href="https://github.com/iHeldan/sheetforge-mcp">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="SheetForge MCP | Excel MCP Server for .xlsx Automation">
-  <meta property="og:description" content="Excel MCP server for AI agents, spreadsheet automation, workbook inspection, and structured .xlsx reporting over the Model Context Protocol.">
+  <meta property="og:title" content="SheetForge MCP | Local-First Excel MCP Server for AI Agents">
+  <meta property="og:description" content="Local-first Excel MCP server for AI agents with structured reads, workbook introspection, layout-aware inspection, and safer .xlsx automation.">
   <meta property="og:url" content="https://github.com/iHeldan/sheetforge-mcp">
   <script type="application/ld+json">
     {
       "@context": "https://schema.org",
       "@type": "SoftwareSourceCode",
       "name": "SheetForge MCP",
-      "description": "Excel MCP server for AI agents, spreadsheet automation, workbook inspection, Excel reporting, and .xlsx dashboard workflows over the Model Context Protocol.",
+      "description": "Local-first Excel MCP server for AI agents, spreadsheet automation, workbook introspection, and safer .xlsx workflows over the Model Context Protocol.",
       "codeRepository": "https://github.com/iHeldan/sheetforge-mcp",
       "url": "https://github.com/iHeldan/sheetforge-mcp",
       "license": "https://opensource.org/license/mit",
@@ -230,13 +230,13 @@
         <span class="eyebrow">MCP + Excel</span>
         <h1>SheetForge MCP</h1>
         <p>
-          An Excel MCP server for AI agents and automation workflows that need to read,
-          write, search, format, validate, chart, and restructure `.xlsx` workbooks with `openpyxl`.
+          A local-first Excel MCP server for AI agents and automation workflows that need
+          structured reads, workbook introspection, and safer `.xlsx` mutation with `openpyxl`.
         </p>
         <p>
-          Use SheetForge MCP when you want spreadsheet automation, workbook inspection,
-          Excel report generation, dashboard updates, or workbook-safe mutation planning
-          over the Model Context Protocol without launching desktop Excel.
+          Use SheetForge MCP when raw cell access is not enough: it can profile workbooks,
+          distinguish tables from layout-heavy sheets, query and aggregate worksheet data,
+          inspect formulas, and plan safer edits before writing.
         </p>
         <p>
           Published package release: <strong>0.7.0</strong>. The repository currently
@@ -262,6 +262,7 @@
         <ul class="meta-list">
           <li>Python 3.10+</li>
           <li>76 MCP tools</li>
+          <li>Smart dataset summaries and read-strategy guidance</li>
           <li>Supports `stdio`, `streamable-http`, and deprecated `sse`</li>
           <li>Uniform JSON envelopes for every tool response</li>
           <li>No Microsoft Excel dependency</li>
@@ -326,7 +327,8 @@
         <ul class="feature-list">
           <li>AI agents that need structured Excel access through MCP</li>
           <li>`.xlsx` report automation without hand-written workbook scripts</li>
-          <li>Workbook profiling before safe mutations</li>
+          <li>Workbook profiling, audit, and diff workflows before safe mutations</li>
+          <li>Local spreadsheet workflows where privacy, low latency, and token efficiency matter</li>
           <li>Excel dashboards with tables, charts, formatting, freeze panes, and print setup</li>
         </ul>
       </article>

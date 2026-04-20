@@ -10,6 +10,7 @@
 
 - Changed `rename_worksheet` so it now updates formula cells in addition to chart references and named ranges, and it also renames the default sibling pivot sheet (`Data_pivot` -> `Revenue_pivot`) when that move is conflict-free.
 - Changed worksheet-shaped dataset reads and row-mutation helpers to stop at the main contiguous data block after the header, so sparse footer notes or distant outlier rows no longer inflate `quick_read` / `read_excel_as_table` row counts or confuse `append_table_rows` and `update_rows_by_key`; `describe_dataset` now surfaces `data_end_row` and `ignored_trailing_row_count` when later rows are treated as a separate block.
+- Refreshed README, package metadata, manifest copy, and landing-page positioning to better highlight SheetForge's current local-first, agent-friendly workbook reading, introspection, and safer mutation strengths without promising unreleased concurrency features.
 
 ## 0.7.0 - 2026-04-19
 

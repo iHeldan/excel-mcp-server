@@ -1,7 +1,7 @@
 [project]
 name = "sheetforge-mcp"
 version = "0.7.0"
-description = "Excel MCP server for AI agents, spreadsheet automation, workbook inspection, and .xlsx reporting with Model Context Protocol and openpyxl"
+description = "Local-first Excel MCP server for AI agents, spreadsheet automation, workbook introspection, and safer .xlsx mutation with openpyxl"
 readme = "README.md"
 requires-python = ">=3.10"
 keywords = ["mcp", "model-context-protocol", "excel", "xlsx", "spreadsheet", "openpyxl", "automation", "ai-agents", "reporting", "dashboard", "workbook"]

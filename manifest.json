@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "sheetforge-mcp",
   "version": "0.7.0",
-  "description": "Excel MCP server for AI agents and automation workflows that read, write, format, and automate .xlsx workbooks",
+  "description": "Local-first Excel MCP server for AI agents and automation workflows with structured reads, workbook introspection, and safer .xlsx mutation",
   "author": {
     "name": "SheetForge",
     "url": "https://github.com/iHeldan"
